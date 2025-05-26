@@ -1,0 +1,9 @@
+# Visual Studio standard ignores
+.vs/
+bin/
+obj/
+*.user
+*.suo
+
+# Ignore images directory
+images/
