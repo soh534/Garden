@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using OpenCvSharp;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Diagnostics;
 
 namespace Garden
 {
@@ -16,13 +17,16 @@ namespace Garden
         // You take a picture via  
         // 1. open_a_terminal_here.bat  
         // 2. adb exec-out screencap -p > file.png  
-        // 3. this saves file.png which is current phone screen under same path as open_a_terminal_here.bat  
+        // 3. this saves file.png which is current phone screen under same path as open_a_terminal_here.bat
 
         [DllImport("user32.dll", SetLastError = true)]
         static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
 
         [DllImport("user32.dll")]
         static extern bool GetWindowRect(IntPtr hwnd, out RECT lpRect);
+
+        [DllImport("user32.dll")]
+        static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, int nFlags);
 
         [StructLayout(LayoutKind.Sequential)]
         public struct RECT
@@ -51,13 +55,20 @@ namespace Garden
             using var bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
             using (var g = Graphics.FromImage(bmp))
             {
-                g.CopyFromScreen(rect.Left, rect.Top, 0, 0, new System.Drawing.Size(width, height), CopyPixelOperation.SourceCopy);
+                IntPtr hdc = g.GetHdc();
+                bool success = PrintWindow(hWnd, hdc, 0);
+                g.ReleaseHdc(hdc);
+
+                if (!success)
+                {
+                    throw new InvalidOperationException("PrintWindow failed.");
+                }
             }
 
             return OpenCvSharp.Extensions.BitmapConverter.ToMat(bmp);
         }
 
-        internal void ProcessFrames(CancellationToken token)
+        internal void ProcessFrames(CancellationToken token, Process proc)
         {
             IntPtr hWnd = GetScrcpyWindowHandle();
             if (hWnd == IntPtr.Zero)
@@ -66,17 +77,28 @@ namespace Garden
                 return;
             }
 
-            while (!token.IsCancellationRequested)
+            Cv2.NamedWindow("Captured Frame", WindowFlags.AutoSize);
+
+            while (!token.IsCancellationRequested && !proc.HasExited)
             {
                 // Frame processing logic would go here
                 try
                 {
                     using Mat frame = CaptureWindow(hWnd);
+
+                    Cv2.ImShow("Captured Frame", frame);
+
+                    int key = Cv2.WaitKey(1);
+
+                    //InputManager.Move(500, 500);
+                    //InputManager.Click();
                 }
                 catch (Exception e)
                 {
                     Console.WriteLine($"Error capturing frame: {e.Message}");
                 }
+
+                Thread.Sleep(33);
             }
 
             return;

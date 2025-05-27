@@ -6,6 +6,7 @@ namespace Garden
 {
     internal class ScrcpyManager
     {
+        // Ensure scrcpy.exe > Properties > Compatibility > Change high DPI settings > Override high DPI scaling behavior > Scaling performed by: System
         readonly string _executablePath;
         public class Thirdparty
         {

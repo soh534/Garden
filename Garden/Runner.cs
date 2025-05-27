@@ -17,10 +17,11 @@ namespace Garden
             ScreenshotManager ssManager = new();
 
             var cts = new CancellationTokenSource();
-            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token), cts.Token);
+            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc), cts.Token);
 
-            InputManager.Move(500, 500);
-            InputManager.Click();
+            // Wait for enter key to be pressed marking exit.
+            Console.WriteLine("Press Enter to exit...");
+            Console.ReadLine();
 
             proc.Refresh();
             // Send close message, this doesn't ensure process is killed.
