@@ -28,10 +28,22 @@ namespace Garden
         [DllImport("user32.dll")]
         static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, int nFlags);
 
+        [DllImport("user32.dll")]
+        static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("user32.dll")]
+        static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
+
         [StructLayout(LayoutKind.Sequential)]
         public struct RECT
         {
             public int Left, Top, Right, Bottom;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT
+        {
+            public int X, Y;
         }
 
         private readonly string _windowTitle;
@@ -48,11 +60,12 @@ namespace Garden
 
         public Mat CaptureWindow(IntPtr hWnd)
         {
-            GetWindowRect(hWnd, out RECT rect);
-            int width = rect.Right - rect.Left;
-            int height = rect.Bottom - rect.Top;
+            // Get bump of full window (including borders, screen-space)
+            GetWindowRect(hWnd, out RECT windowRect);
+            int windowWidth = windowRect.Right - windowRect.Left;
+            int windowHeight = windowRect.Bottom - windowRect.Top;
 
-            using var bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+            using var bmp = new Bitmap(windowWidth, windowHeight, PixelFormat.Format32bppArgb);
             using (var g = Graphics.FromImage(bmp))
             {
                 IntPtr hdc = g.GetHdc();
@@ -61,11 +74,29 @@ namespace Garden
 
                 if (!success)
                 {
+                    bmp.Dispose();
                     throw new InvalidOperationException("PrintWindow failed.");
                 }
             }
 
-            return OpenCvSharp.Extensions.BitmapConverter.ToMat(bmp);
+            // Get client part of full window
+            GetClientRect(hWnd, out RECT clientRect);
+
+            // Get client top left in screen coordinates
+            POINT clientTopLeft = new POINT { X = clientRect.Left, Y = clientRect.Top };
+            ClientToScreen(hWnd, ref clientTopLeft);
+
+            // Calculate offset from window border to client
+            int offsetX = clientTopLeft.X - windowRect.Left;
+            int offsetY = clientTopLeft.Y - windowRect.Top;
+
+            // Crop out client bmp from full window bmp
+            using var croppedBmp = bmp.Clone(new Rectangle(offsetX, offsetY, clientRect.Right, clientRect.Bottom), bmp.PixelFormat);
+            bmp.Dispose();
+
+            Mat mat = OpenCvSharp.Extensions.BitmapConverter.ToMat(croppedBmp);
+            croppedBmp.Dispose();
+            return mat;
         }
 
         internal void ProcessFrames(CancellationToken token, Process proc)
