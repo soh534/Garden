@@ -8,21 +8,10 @@ namespace Garden
     {
         // Ensure scrcpy.exe > Properties > Compatibility > Change high DPI settings > Override high DPI scaling behavior > Scaling performed by: System
         readonly string _executablePath;
-        public class Thirdparty
-        {
-            public string name { get; set; }
-            public string path { get; set; }
-        }
 
-        public ScrcpyManager(string thirdPartyPath)
+        public ScrcpyManager(string executablePath)
         {
-            string jsonString = File.ReadAllText(thirdPartyPath);
-            List<Thirdparty>? thirdPartySdks = JsonSerializer.Deserialize<List<Thirdparty>>(jsonString);
-            Debug.Assert(thirdPartySdks != null);
-
-            Thirdparty? scrcpy = thirdPartySdks.Find(sdk => sdk.name.Equals("scrcpy"));
-            Debug.Assert(scrcpy != null);
-            _executablePath = scrcpy.path;
+            _executablePath = executablePath;
         }
 
         internal Process? Start()

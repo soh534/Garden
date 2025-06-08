@@ -1,6 +1,9 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
+
+using Thirdparty = Garden.ConfigManager.Config.Thirdparty;
 
 namespace Garden
 {
@@ -10,21 +13,48 @@ namespace Garden
 
         public void Run()
         {
-            ScrcpyManager scrcpyManager = new(ConfigPath);
+            ConfigManager configManager = new(ConfigPath);
+
+            Thirdparty? thirdparty = configManager.GetThirdPartySdk("scrcpy");
+            if (thirdparty == null)
+            {
+                Console.WriteLine("scrcpy SDK not found in config.");
+                return;
+            }
+            ScrcpyManager scrcpyManager = new(thirdparty.path);
             Process? proc = scrcpyManager.Start();
             Debug.Assert(proc != null);
 
-            ScreenshotManager ssManager = new();
-
             var cts = new CancellationTokenSource();
-            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc), cts.Token);
 
-            // Wait for enter key to be pressed marking exit.
-            Console.WriteLine("Press Enter to exit...");
-            Console.ReadLine();
+            // Start a command listener
+            ConcurrentQueue<string> commandQueue = new ConcurrentQueue<string>();
+            Task.Run(() =>
+            {
+                while (!cts.Token.IsCancellationRequested)
+                {
+                    var command = Console.ReadLine();
+                    if (command != null)
+                    {
+                        if (command.Equals("quit", StringComparison.OrdinalIgnoreCase))
+                        {
+                            cts.Cancel();
+                            break;
+                        }
+                        commandQueue.Enqueue(command);
+                    }
+                }
+            });
 
-            proc.Refresh();
+            ScreenshotManager ssManager = new(configManager.ImageSavePath);
+            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc, commandQueue), cts.Token);
+
+            // Wait for processing to finish (cancellation will be triggered by "quit" command
+            processingTask.Wait();
+
+
             // Send close message, this doesn't ensure process is killed.
+            proc.Refresh();
             if (!proc.CloseMainWindow())
             {
                 // Could not send close message, fallback to kill.

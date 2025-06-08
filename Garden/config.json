@@ -1,6 +1,6 @@
-[
-    {
-        "name":"scrcpy",
-        "path":"E:\\Code\\Thirdparty\\scrcpy-win64-v3.2\\scrcpy-win64-v3.2\\scrcpy.exe"
-    }
-]
+{
+    "imageSavePath":"E:\\Code\\Garden\\images",
+	"thirdPartySdks": [
+    {"name":"scrcpy", "path":"E:\\Code\\Thirdparty\\scrcpy-win64-v3.2\\scrcpy-win64-v3.2\\scrcpy.exe"}
+	]
+}

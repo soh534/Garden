@@ -9,6 +9,7 @@ using OpenCvSharp;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Diagnostics;
+using System.Collections.Concurrent;
 
 namespace Garden
 {
@@ -46,10 +47,12 @@ namespace Garden
             public int X, Y;
         }
 
+        private readonly string _imageSavePath;
         private readonly string _windowTitle;
 
-        public ScreenshotManager(string windowTitle = "Garden")
+        public ScreenshotManager(string imageSavePath, string windowTitle = "Garden")
         {
+            _imageSavePath = imageSavePath;
             _windowTitle = windowTitle;
         }
 
@@ -60,12 +63,12 @@ namespace Garden
 
         public Mat CaptureWindow(IntPtr hWnd)
         {
-            // Get bump of full window (including borders, screen-space)
+            // Get bmp of full window (including borders, screen-space)
             GetWindowRect(hWnd, out RECT windowRect);
             int windowWidth = windowRect.Right - windowRect.Left;
             int windowHeight = windowRect.Bottom - windowRect.Top;
 
-            using var bmp = new Bitmap(windowWidth, windowHeight, PixelFormat.Format32bppArgb);
+            using var bmp = new Bitmap(windowWidth, windowHeight, PixelFormat.Format32bppRgb);
             using (var g = Graphics.FromImage(bmp))
             {
                 IntPtr hdc = g.GetHdc();
@@ -79,7 +82,7 @@ namespace Garden
                 }
             }
 
-            // Get client part of full window
+            // Get client rect in client-space
             GetClientRect(hWnd, out RECT clientRect);
 
             // Get client top left in screen coordinates
@@ -99,7 +102,7 @@ namespace Garden
             return mat;
         }
 
-        internal void ProcessFrames(CancellationToken token, Process proc)
+        internal void ProcessFrames(CancellationToken token, Process proc, ConcurrentQueue<string> commandQueue)
         {
             IntPtr hWnd = GetScrcpyWindowHandle();
             if (hWnd == IntPtr.Zero)
@@ -110,16 +113,21 @@ namespace Garden
 
             Cv2.NamedWindow("Captured Frame", WindowFlags.AutoSize);
 
+            var commandHandler = new CommandHandler(_imageSavePath);
             while (!token.IsCancellationRequested && !proc.HasExited)
             {
                 // Frame processing logic would go here
                 try
                 {
                     using Mat frame = CaptureWindow(hWnd);
-
                     Cv2.ImShow("Captured Frame", frame);
-
                     int key = Cv2.WaitKey(1);
+
+                    // Check for commands
+                    while (commandQueue.TryDequeue(out var command))
+                    {
+                        commandHandler.Handle(command, frame);
+                    }
 
                     //InputManager.Move(500, 500);
                     //InputManager.Click();
