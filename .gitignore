@@ -10,3 +10,5 @@ Garden/config.json
 
 # Ignore images directory
 images/
+actions/
+rois/

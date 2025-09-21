@@ -11,27 +11,65 @@ namespace Garden
     public class CommandHandler
     {
         private readonly string _imageSavePath;
+        private readonly MouseEventRecorder _mouseRecorder;
+        private readonly ActionPlayer _actionPlayer;
 
-        public CommandHandler(string imageSavePath)
+        public CommandHandler(string imageSavePath, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer)
         {
             _imageSavePath = imageSavePath;
+            _mouseRecorder = mouseRecorder;
+            _actionPlayer = actionPlayer;
         }
 
-        public void Handle(string command, Mat frame)
+        public bool Handle(string command, Mat frame)
         {
-            if (command.StartsWith("save ", StringComparison.OrdinalIgnoreCase))
+            if (command.Equals("quit", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine("Quit command received.");
+                return false; // Signal to stop processing
+            }
+
+            if (command.StartsWith("save image ", StringComparison.OrdinalIgnoreCase))
             {
                 HandleSaveCommand(command, frame);
-                return;
+                return true; // Continue processing
             }
+
+            if (command.Equals("record action", StringComparison.OrdinalIgnoreCase))
+            {
+                _mouseRecorder.StartRecording();
+                return true; // Continue processing
+            }
+
+            if (command.Equals("reset action", StringComparison.OrdinalIgnoreCase))
+            {
+                _mouseRecorder.ResetRecording();
+                return true; // Continue processing
+            }
+
+
+            if (command.StartsWith("save action ", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleMouseRecordSaveCommand(command);
+                return true; // Continue processing
+            }
+
+            if (command.StartsWith("replay action ", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleRunActionCommand(command);
+                return true; // Continue processing
+            }
+
+            Console.WriteLine($"Unknown command: {command}");
+            return true; // Continue processing
         }
 
         private void HandleSaveCommand(string command, Mat frame)
         {
-            var parts = command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 2)
+            var parts = command.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 3)
             {
-                string filename = parts[1].Trim();
+                string filename = parts[2].Trim();
                 string savePath = Path.Combine(_imageSavePath, filename);
                 Directory.CreateDirectory(_imageSavePath);
                 if (File.Exists(savePath))
@@ -43,7 +81,43 @@ namespace Garden
             }
             else
             {
-                Console.WriteLine("Usage: save filename.png");
+                Console.WriteLine("Usage: save image filename.png");
+            }
+        }
+
+        private void HandleMouseRecordSaveCommand(string command)
+        {
+            var parts = command.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 3)
+            {
+                string filename = parts[2].Trim();
+                if (!filename.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                {
+                    filename += ".json";
+                }
+                _mouseRecorder.SaveRecording(filename);
+            }
+            else
+            {
+                Console.WriteLine("Usage: save action filename.json");
+            }
+        }
+
+        private void HandleRunActionCommand(string command)
+        {
+            var parts = command.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 3)
+            {
+                string filename = parts[2].Trim();
+                if (!filename.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                {
+                    filename += ".json";
+                }
+                _actionPlayer.ReplayAction(filename);
+            }
+            else
+            {
+                Console.WriteLine("Usage: replay action filename");
             }
         }
     }

@@ -14,20 +14,23 @@ namespace Garden
         private readonly Config _config;
 
         // Expose config values as properties
-        public string ImageSavePath => _config.imageSavePath;
-        public Thirdparty? GetThirdPartySdk(string name) => _config.thirdPartySdks.Find(sdk => sdk.name.Equals(name));
+        public string? ImageSavePath => _config.imageSavePath;
+        public string? ActionSavePath => _config.actionSavePath;
+        public double Scale => _config.scale ?? 1.0;
+        public Thirdparty GetThirdPartySdk(string name) => _config.thirdPartySdks.Find(sdk => sdk.name.Equals(name));
 
         public class Config
         {
-            public string imageSavePath { get; set; }
-            public List<Thirdparty> thirdPartySdks { get; set; }
+            public string? imageSavePath { get; set; }
+            public string? actionSavePath { get; set; }
+            public double? scale { get; set; }
+            public required List<Thirdparty> thirdPartySdks { get; set; }
 
             public class Thirdparty
             {
-                public string name { get; set; }
-                public string path { get; set; }
+                public required string name { get; set; }
+                public required string path { get; set; }
             }
-
         }
 
         public ConfigManager(string configPath)

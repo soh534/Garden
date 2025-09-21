@@ -18,7 +18,11 @@ namespace Garden
         {
             ProcessStartInfo startInfo = new();
             startInfo.FileName = _executablePath;
-            startInfo.Arguments = "--no-mouse-hover --window-title=Garden"; // Without this, seed is planted without hovering.
+            startInfo.Arguments = "--no-mouse-hover --stay-awake --power-off-on-close --window-title=Garden"; // Without this, seed is planted without hovering.
+            startInfo.RedirectStandardOutput = true;
+            startInfo.RedirectStandardError = true;
+            startInfo.UseShellExecute = false;
+            startInfo.CreateNoWindow = false;
             try
             {
                 Process? exeProcess = Process.Start(startInfo);

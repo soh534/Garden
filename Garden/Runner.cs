@@ -25,6 +25,21 @@ namespace Garden
             Process? proc = scrcpyManager.Start();
             Debug.Assert(proc != null);
 
+            Console.WriteLine();
+            Console.WriteLine("==========================================");
+            Console.WriteLine("     Garden - Ready for Commands");
+            Console.WriteLine("==========================================");
+            Console.WriteLine("Available commands:");
+            Console.WriteLine("  save image <filename.png>   - Save screenshot");
+            Console.WriteLine("  record action               - Start recording mouse clicks");
+            Console.WriteLine("  reset action                - Clear recorded events (stay recording)");
+            Console.WriteLine("  save action <filename>      - Save recorded clicks & end recording");
+            Console.WriteLine("  replay action <filename>    - Replay recorded clicks");
+            Console.WriteLine("  quit                        - Exit application");
+            Console.WriteLine("==========================================");
+            Console.WriteLine();
+            Console.Write("Enter command: ");
+
             var cts = new CancellationTokenSource();
 
             // Start a command listener
@@ -36,22 +51,18 @@ namespace Garden
                     var command = Console.ReadLine();
                     if (command != null)
                     {
-                        if (command.Equals("quit", StringComparison.OrdinalIgnoreCase))
-                        {
-                            cts.Cancel();
-                            break;
-                        }
                         commandQueue.Enqueue(command);
                     }
                 }
             });
 
-            ScreenshotManager ssManager = new(configManager.ImageSavePath);
-            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc, commandQueue), cts.Token);
+            ScreenshotManager ssManager = new(configManager.ImageSavePath, configManager.ActionSavePath);
+            MouseEventRecorder mouseRecorder = new(configManager.ActionSavePath, configManager.Scale);
+            ActionPlayer actionPlayer = new(configManager.ActionSavePath, configManager.Scale);
+            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc, commandQueue, mouseRecorder, actionPlayer), cts.Token);
 
             // Wait for processing to finish (cancellation will be triggered by "quit" command
             processingTask.Wait();
-
 
             // Send close message, this doesn't ensure process is killed.
             proc.Refresh();
@@ -71,6 +82,7 @@ namespace Garden
 
             cts.Cancel();
             processingTask.Wait();
+            mouseRecorder.Dispose();
             return;
         }
     }

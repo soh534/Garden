@@ -48,11 +48,13 @@ namespace Garden
         }
 
         private readonly string _imageSavePath;
+        private readonly string _actionSavePath;
         private readonly string _windowTitle;
 
-        public ScreenshotManager(string imageSavePath, string windowTitle = "Garden")
+        public ScreenshotManager(string imageSavePath, string actionSavePath, string windowTitle = "Garden")
         {
             _imageSavePath = imageSavePath;
+            _actionSavePath = actionSavePath;
             _windowTitle = windowTitle;
         }
 
@@ -102,7 +104,7 @@ namespace Garden
             return mat;
         }
 
-        internal void ProcessFrames(CancellationToken token, Process proc, ConcurrentQueue<string> commandQueue)
+        internal void ProcessFrames(CancellationToken token, Process proc, ConcurrentQueue<string> commandQueue, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer)
         {
             IntPtr hWnd = GetScrcpyWindowHandle();
             if (hWnd == IntPtr.Zero)
@@ -113,24 +115,24 @@ namespace Garden
 
             Cv2.NamedWindow("Captured Frame", WindowFlags.AutoSize);
 
-            var commandHandler = new CommandHandler(_imageSavePath);
+            var commandHandler = new CommandHandler(_imageSavePath, mouseRecorder, actionPlayer);
             while (!token.IsCancellationRequested && !proc.HasExited)
             {
-                // Frame processing logic would go here
                 try
                 {
                     using Mat frame = CaptureWindow(hWnd);
                     Cv2.ImShow("Captured Frame", frame);
                     int key = Cv2.WaitKey(1);
 
-                    // Check for commands
+                    // Check for commands passed through terminal.
                     while (commandQueue.TryDequeue(out var command))
                     {
-                        commandHandler.Handle(command, frame);
+                        bool shouldContinue = commandHandler.Handle(command, frame);
+                        if (!shouldContinue)
+                        {
+                            return; // Exit ProcessFrames if quit command was received
+                        }
                     }
-
-                    //InputManager.Move(500, 500);
-                    //InputManager.Click();
                 }
                 catch (Exception e)
                 {
