@@ -5,27 +5,32 @@ using System.Text;
 using System.Threading.Tasks;
 
 using OpenCvSharp;
+using NLog;
+using System.Collections.Concurrent;
 
 namespace Garden
 {
     public class CommandHandler
     {
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private readonly string _imageSavePath;
         private readonly MouseEventRecorder _mouseRecorder;
         private readonly ActionPlayer _actionPlayer;
+        private readonly ConcurrentQueue<ActionPlayer.MouseEvent> _actionQueue;
 
-        public CommandHandler(string imageSavePath, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer)
+        public CommandHandler(string imageSavePath, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue)
         {
             _imageSavePath = imageSavePath;
             _mouseRecorder = mouseRecorder;
             _actionPlayer = actionPlayer;
+            _actionQueue = actionQueue;
         }
 
         public bool Handle(string command, Mat frame)
         {
             if (command.Equals("quit", StringComparison.OrdinalIgnoreCase))
             {
-                Console.WriteLine("Quit command received.");
+                Logger.Info("Quit command received.");
                 return false; // Signal to stop processing
             }
 
@@ -60,7 +65,7 @@ namespace Garden
                 return true; // Continue processing
             }
 
-            Console.WriteLine($"Unknown command: {command}");
+            Logger.Info($"Unknown command: {command}");
             return true; // Continue processing
         }
 
@@ -74,14 +79,14 @@ namespace Garden
                 Directory.CreateDirectory(_imageSavePath);
                 if (File.Exists(savePath))
                 {
-                    Console.WriteLine($"Warning: Overwriting existing file {savePath}");
+                    Logger.Info($"Warning: Overwriting existing file {savePath}");
                 }
                 Cv2.ImWrite(savePath, frame);
-                Console.WriteLine($"Frame saved to {savePath}");
+                Logger.Info($"Frame saved to {savePath}");
             }
             else
             {
-                Console.WriteLine("Usage: save image filename.png");
+                Logger.Info("Usage: save image filename.png");
             }
         }
 
@@ -99,7 +104,7 @@ namespace Garden
             }
             else
             {
-                Console.WriteLine("Usage: save action filename.json");
+                Logger.Info("Usage: save action filename.json");
             }
         }
 
@@ -113,11 +118,11 @@ namespace Garden
                 {
                     filename += ".json";
                 }
-                _actionPlayer.ReplayAction(filename);
+                _actionPlayer.QueueReplay(filename, _actionQueue);
             }
             else
             {
-                Console.WriteLine("Usage: replay action filename");
+                Logger.Info("Usage: replay action filename");
             }
         }
     }

@@ -1,10 +1,22 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using NLog;
+using System.Collections.Concurrent;
 
 namespace Garden
 {
     public class ActionPlayer
     {
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+        public class ActionEventArgs : EventArgs
+        {
+            public int WindowX { get; set; }
+            public int WindowY { get; set; }
+            public bool IsMouseDown { get; set; }
+        }
+
+        // Events for visual feedback
+        public event EventHandler<ActionEventArgs>? ActionPerformed;
         // Reuse MouseEvent structure from MouseEventRecorder
         public class MouseEvent
         {
@@ -49,14 +61,9 @@ namespace Garden
         private const int SM_YVIRTUALSCREEN = 77;  // Top of virtual screen
 
         private readonly string _actionDirectory;
-        private readonly double _scale;
-        private readonly string _windowTitle;
-
-        public ActionPlayer(string actionDirectory, double scale = 1.0, string windowTitle = "Garden")
+        public ActionPlayer(string actionDirectory)
         {
             _actionDirectory = actionDirectory;
-            _scale = scale;
-            _windowTitle = windowTitle;
         }
 
         public List<MouseEvent>? LoadAction(string filename)
@@ -65,7 +72,7 @@ namespace Garden
 
             if (!File.Exists(filePath))
             {
-                Console.WriteLine($"Action file not found: {filePath}");
+                Logger.Error($"Action file not found: {filePath}");
                 return null;
             }
 
@@ -76,16 +83,16 @@ namespace Garden
 
                 if (events == null || events.Count == 0)
                 {
-                    Console.WriteLine($"No events found in {filename}");
+                    Logger.Info($"No events found in {filename}");
                     return null;
                 }
 
-                Console.WriteLine($"Loaded {events.Count} events from {filename}");
+                Logger.Info($"Loaded {events.Count} events from {filename}");
                 return events;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error loading action file: {ex.Message}");
+                Logger.Error($"Error loading action file: {ex.Message}");
                 return null;
             }
         }
@@ -95,13 +102,13 @@ namespace Garden
             var events = LoadAction(filename);
             if (events == null) return;
 
-            Console.WriteLine($"Replaying {events.Count} mouse events...");
+            Logger.Info($"Replaying {events.Count} mouse events...");
 
             // Get scrcpy window for coordinate conversion
-            IntPtr hWnd = GetScrcpyWindowHandle();
+            IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
             if (hWnd == IntPtr.Zero)
             {
-                Console.WriteLine("Cannot find scrcpy window for replay.");
+                Logger.Error("Cannot find scrcpy window for replay.");
                 return;
             }
 
@@ -109,7 +116,7 @@ namespace Garden
             SetForegroundWindow(hWnd);
             while (GetForegroundWindow() != hWnd)
             {
-                Thread.Sleep(10);
+                Thread.Sleep(100);
             }
 
             DateTime? lastEventTime = null;
@@ -136,17 +143,54 @@ namespace Garden
                     Thread.Sleep(10); // Small delay for movement
 
                     // Perform mouse action based on IsMouseDown
-                    Console.WriteLine($"Mouse {(mouseEvent.IsMouseDown ? "down" : "up")} at ({mouseEvent.X}, {mouseEvent.Y}) -> screen ({screenX}, {screenY})");
+                    Logger.Info($"Mouse {(mouseEvent.IsMouseDown ? "down" : "up")} at ({mouseEvent.X}, {mouseEvent.Y}) -> screen ({screenX}, {screenY})");
                     InputManager.MouseEvent(mouseEvent.IsMouseDown);
+
+                    // Fire event for visual feedback
+                    ActionPerformed?.Invoke(this, new ActionEventArgs
+                    {
+                        WindowX = mouseEvent.X,
+                        WindowY = mouseEvent.Y,
+                        IsMouseDown = mouseEvent.IsMouseDown
+                    });
                 }
             }
 
-            Console.WriteLine("Replay completed.");
+            Logger.Info("Replay completed.");
         }
 
-        private IntPtr GetScrcpyWindowHandle()
+        public void QueueReplay(string filename, ConcurrentQueue<MouseEvent> actionQueue)
         {
-            return FindWindow(null, _windowTitle);
+            var events = LoadAction(filename);
+            if (events == null) return;
+
+            Logger.Info($"Queueing {events.Count} events for replay");
+            foreach (var evt in events)
+            {
+                actionQueue.Enqueue(evt);
+            }
+        }
+
+        public void ExecuteAction(MouseEvent mouseEvent)
+        {
+            // Convert window-relative coordinates back to screen coordinates
+            if (ConvertToScreenCoordinates(mouseEvent.X, mouseEvent.Y, out int screenX, out int screenY))
+            {
+                // Move to position first
+                InputManager.Move(screenX, screenY);
+                Thread.Sleep(10); // Small delay for movement
+
+                // Perform mouse action based on IsMouseDown
+                InputManager.MouseEvent(mouseEvent.IsMouseDown);
+
+                // Fire event for visual feedback
+                ActionPerformed?.Invoke(this, new ActionEventArgs
+                {
+                    WindowX = mouseEvent.X,
+                    WindowY = mouseEvent.Y,
+                    IsMouseDown = mouseEvent.IsMouseDown
+                });
+            }
         }
 
         private bool ConvertToScreenCoordinates(int windowX, int windowY, out int screenX, out int screenY)
@@ -154,10 +198,10 @@ namespace Garden
             screenX = 0;
             screenY = 0;
 
-            IntPtr hWnd = GetScrcpyWindowHandle();
+            IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
             if (hWnd == IntPtr.Zero)
             {
-                Console.WriteLine("DEBUG: Could not find scrcpy window for replay");
+                Logger.Info("Could not find scrcpy window for replay");
                 return false;
             }
 
@@ -166,28 +210,18 @@ namespace Garden
             POINT clientTopLeft = new POINT { x = clientRect.Left, y = clientRect.Top };
             ClientToScreen(hWnd, ref clientTopLeft);
 
-            Console.WriteLine($"DEBUG: Window client area top-left: ({clientTopLeft.x}, {clientTopLeft.y})");
-            Console.WriteLine($"DEBUG: Input window coords: ({windowX}, {windowY})");
-
             int absoluteX = (int)(clientTopLeft.x) + windowX;
             int absoluteY = (int)(clientTopLeft.y) + windowY;
-            Console.WriteLine($"DEBUG: Absolute screen coords: ({absoluteX}, {absoluteY})");
 
             // Get virtual screen offset to map coordinates to (0,0) origin
             int virtualScreenLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
             int virtualScreenTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
-            Console.WriteLine($"DEBUG: Virtual screen offset: ({virtualScreenLeft}, {virtualScreenTop})");
 
             int virtualAdjustedX = absoluteX - virtualScreenLeft;
             int virtualAdjustedY = absoluteY - virtualScreenTop;
-            Console.WriteLine($"DEBUG: After virtual screen adjustment: ({virtualAdjustedX}, {virtualAdjustedY})");
 
             screenX = (int)(virtualAdjustedX);
             screenY = (int)(virtualAdjustedY);
-
-            //screenX = (int)(virtualAdjustedX * _scale);
-            //screenY = (int)(virtualAdjustedY * _scale);
-            Console.WriteLine($"DEBUG: Final screen coordinates after scaling by {_scale}: ({screenX}, {screenY})");
 
             return true;
         }

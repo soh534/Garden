@@ -1,10 +1,12 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using NLog;
 
 namespace Garden
 {
     public class InputManager
     {
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         [StructLayout(LayoutKind.Sequential)]
         public struct MouseInput
         {
@@ -56,7 +58,7 @@ namespace Garden
             uint errorCode = SendInput(1, inputs, Marshal.SizeOf(typeof(Input)));
             if (errorCode != 1)
             {
-                Console.WriteLine(GetLastError());
+                Logger.Error($"SendInput error: {GetLastError()}");
             }
         }
 
@@ -71,7 +73,7 @@ namespace Garden
             uint errorCode = SendInput(1, inputs, Marshal.SizeOf(typeof(Input)));
             if (errorCode != 1)
             {
-                Console.WriteLine(GetLastError());
+                Logger.Error($"SendInput error: {GetLastError()}");
             }
         }
 
@@ -96,14 +98,9 @@ namespace Garden
             int virtualScreenLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
             int virtualScreenTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
 
-
             // Normalize to 0-65535 range based on virtual screen size
             int normalizedX = (int)((double)x * 65535 / virtualScreenWidth);
             int normalizedY = (int)((double)y * 65535 / virtualScreenHeight);
-
-            Console.WriteLine($"DEBUG INPUT: Virtual screen: {virtualScreenWidth}x{virtualScreenHeight} at ({virtualScreenLeft}, {virtualScreenTop})");
-            Console.WriteLine($"DEBUG INPUT: Input coords: ({x}, {y})");
-            Console.WriteLine($"DEBUG INPUT: Normalized coords: ({normalizedX}, {normalizedY})");
 
             Input[] inputs = new Input[1];
             inputs[0].type = (int)InputType.Mouse;
@@ -114,11 +111,7 @@ namespace Garden
             uint errorCode = SendInput(1, inputs, Marshal.SizeOf(typeof(Input)));
             if (errorCode != 1)
             {
-                Console.WriteLine($"DEBUG INPUT: SendInput failed with error: {GetLastError()}");
-            }
-            else
-            {
-                Console.WriteLine("DEBUG INPUT: SendInput succeeded");
+                Logger.Error($"SendInput failed with error: {GetLastError()}");
             }
         }
     }

@@ -1,11 +1,13 @@
 using System.Diagnostics;
 using static Garden.Runner;
 using System.Text.Json;
+using NLog;
 
 namespace Garden
 {
     internal class ScrcpyManager
     {
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         // Ensure scrcpy.exe > Properties > Compatibility > Change high DPI settings > Override high DPI scaling behavior > Scaling performed by: System
         readonly string _executablePath;
 
@@ -38,7 +40,7 @@ namespace Garden
                     // Check if the process exits before window is created and get out of loop.
                     if (exeProcess.HasExited)
                     {
-                        Debug.WriteLine("Process exited before window is created.");
+                        Logger.Info("Process exited before window is created.");
                         return null;
                     }
                     Thread.Sleep(100);
@@ -49,7 +51,7 @@ namespace Garden
             }
             catch (Exception e)
             {
-                Debug.WriteLine($"Failed somehow: {e.Message}");
+                Logger.Error($"Failed somehow: {e.Message}");
             }
 
             return null;

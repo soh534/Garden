@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
+using NLog;
 
 using Thirdparty = Garden.ConfigManager.Config.Thirdparty;
 
@@ -9,6 +10,7 @@ namespace Garden
 {
     class Runner
     {
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         const string ConfigPath = "E:\\Code\\Garden\\Garden\\config.json";
 
         public void Run()
@@ -21,6 +23,10 @@ namespace Garden
                 Console.WriteLine("scrcpy SDK not found in config.");
                 return;
             }
+            // Initialize window manager with the window title and scale
+            WindowManager.Instance.SetWindowTitle("Garden");
+            WindowManager.Instance.SetScale(configManager.Scale);
+
             ScrcpyManager scrcpyManager = new(thirdparty.path);
             Process? proc = scrcpyManager.Start();
             Debug.Assert(proc != null);
@@ -44,6 +50,7 @@ namespace Garden
 
             // Start a command listener
             ConcurrentQueue<string> commandQueue = new ConcurrentQueue<string>();
+            ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue = new ConcurrentQueue<ActionPlayer.MouseEvent>();
             Task.Run(() =>
             {
                 while (!cts.Token.IsCancellationRequested)
@@ -57,9 +64,9 @@ namespace Garden
             });
 
             ScreenshotManager ssManager = new(configManager.ImageSavePath, configManager.ActionSavePath);
-            MouseEventRecorder mouseRecorder = new(configManager.ActionSavePath, configManager.Scale);
-            ActionPlayer actionPlayer = new(configManager.ActionSavePath, configManager.Scale);
-            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc, commandQueue, mouseRecorder, actionPlayer), cts.Token);
+            MouseEventRecorder mouseRecorder = new(configManager.ActionSavePath);
+            ActionPlayer actionPlayer = new(configManager.ActionSavePath);
+            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc, commandQueue, actionQueue, mouseRecorder, actionPlayer), cts.Token);
 
             // Wait for processing to finish (cancellation will be triggered by "quit" command
             processingTask.Wait();
