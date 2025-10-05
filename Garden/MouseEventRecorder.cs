@@ -2,30 +2,23 @@
 
 namespace Garden
 {
-    public class MouseEventRecorder
+    public class MouseEventRecorder : Recorder
     {
         private readonly List<MouseEventReporter.MouseEvent> _recordedEvents;
         private readonly string _saveDirectory;
-        private readonly MouseEventReporter _mouseReporter;
-        private bool _isRecording = false;
 
-        public MouseEventRecorder(string saveDirectory)
+        public MouseEventRecorder(string saveDirectory) : base(WindowType.Garden)
         {
             _recordedEvents = new();
             _saveDirectory = saveDirectory;
-            _mouseReporter = new MouseEventReporter();
-
-            // Subscribe to mouse events
-            _mouseReporter.MouseCallback += OnMouseEvent;
         }
 
-        public void StartRecording()
+        public override void StartRecording()
         {
             if (!_isRecording)
             {
                 _recordedEvents.Clear();
-                _mouseReporter.StartReporting();
-                _isRecording = true;
+                base.StartRecording();
                 Console.WriteLine("Mouse recording started...");
             }
             else
@@ -34,12 +27,11 @@ namespace Garden
             }
         }
 
-        public void StopRecording()
+        public override void StopRecording()
         {
             if (_isRecording)
             {
-                _mouseReporter.StopReporting();
-                _isRecording = false;
+                base.StopRecording();
                 Console.WriteLine($"Mouse recording stopped. Recorded {_recordedEvents.Count} events.");
             }
         }
@@ -85,15 +77,14 @@ namespace Garden
             Console.WriteLine($"Mouse events saved to {filePath}");
         }
 
-        private void OnMouseEvent(object? sender, MouseEventReporter.MouseEvent e)
+        protected override void OnMouseClick(object? sender, MouseEventReporter.MouseEvent e)
         {
             _recordedEvents.Add(e);
         }
 
-        public void Dispose()
+        protected override void OnMouseMove(object? sender, MouseEventReporter.MouseEvent e)
         {
-            StopRecording();
-            _mouseReporter.Dispose();
+            // Ignore mouse move events for action recording
         }
     }
 }

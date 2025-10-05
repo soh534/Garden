@@ -16,6 +16,7 @@ namespace Garden
         // Expose config values as properties
         public string? ImageSavePath => _config.imageSavePath;
         public string? ActionSavePath => _config.actionSavePath;
+        public string? RoiSavePath => _config.roiSavePath;
         public double Scale => _config.scale ?? 1.0;
         public Thirdparty GetThirdPartySdk(string name) => _config.thirdPartySdks.Find(sdk => sdk.name.Equals(name));
 
@@ -23,6 +24,7 @@ namespace Garden
         {
             public string? imageSavePath { get; set; }
             public string? actionSavePath { get; set; }
+            public string? roiSavePath { get; set; }
             public double? scale { get; set; }
             public required List<Thirdparty> thirdPartySdks { get; set; }
 

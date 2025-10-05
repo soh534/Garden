@@ -19,6 +19,7 @@ namespace Garden
         private const int WH_MOUSE_LL = 14;
         private const int WM_LBUTTONDOWN = 0x0201;
         private const int WM_LBUTTONUP = 0x0202;
+        private const int WM_MOUSEMOVE = 0x0200;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct POINT
@@ -66,15 +67,18 @@ namespace Garden
         private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
 
         // Events
-        public event EventHandler<MouseEvent>? MouseCallback;
+        public event EventHandler<MouseEvent>? MouseClickCallback;
+        public event EventHandler<MouseEvent>? MouseMoveCallback;
 
         private LowLevelMouseProc _proc;
         private IntPtr _hookID = IntPtr.Zero;
         private bool _isReporting = false;
+        private readonly WindowType _windowType;
 
-        public MouseEventReporter()
+        public MouseEventReporter(WindowType windowType)
         {
             _proc = HookCallback;
+            _windowType = windowType;
         }
 
         public void StartReporting()
@@ -82,10 +86,10 @@ namespace Garden
             if (!_isReporting)
             {
                 // Check if window exists before starting
-                IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
+                IntPtr hWnd = WindowManager.Instance.GetWindowHandle(_windowType);
                 if (hWnd == IntPtr.Zero)
                 {
-                    Logger.Error($"Cannot find scrcpy window with title '{WindowManager.Instance.GetWindowTitle()}'. Recording not started.");
+                    Logger.Error($"Cannot find window for type '{_windowType}'. Recording not started.");
                     return;
                 }
 
@@ -119,7 +123,7 @@ namespace Garden
             windowX = 0;
             windowY = 0;
 
-            IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
+            IntPtr hWnd = WindowManager.Instance.GetWindowHandle(_windowType);
             if (hWnd == IntPtr.Zero)
                 return false;
 
@@ -159,49 +163,55 @@ namespace Garden
             {
                 var hookStruct = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
 
-                // Only process and debug on actual clicks, not mouse movement
-                switch ((int)wParam)
+                // Scale coordinates using config value
+                double scale = WindowManager.Instance.GetScale();
+                int scaledX = (int)(hookStruct.pt.x / scale);
+                int scaledY = (int)(hookStruct.pt.y / scale);
+
+                // Convert screen coordinates to scrcpy window coordinates
+                if (ConvertToWindowCoordinates(scaledX, scaledY, out int windowX, out int windowY))
                 {
-                    case WM_LBUTTONDOWN:
-                    case WM_LBUTTONUP:
-                        // Scale coordinates using config value
-                        double scale = WindowManager.Instance.GetScale();
-                        int scaledX = (int)(hookStruct.pt.x / scale);
-                        int scaledY = (int)(hookStruct.pt.y / scale);
-
-                        // Convert screen coordinates to scrcpy window coordinates
-                        if (ConvertToWindowCoordinates(scaledX, scaledY, out int windowX, out int windowY))
-                        {
-                            if ((int)wParam == WM_LBUTTONDOWN)
+                    switch ((int)wParam)
+                    {
+                        case WM_LBUTTONDOWN:
+                            var downEvent = new MouseEvent
                             {
-                                var downEvent = new MouseEvent
-                                {
-                                    Timestamp = DateTime.Now,
-                                    X = windowX,
-                                    Y = windowY,
-                                    IsMouseDown = true
-                                };
+                                Timestamp = DateTime.Now,
+                                X = windowX,
+                                Y = windowY,
+                                IsMouseDown = true
+                            };
 
-                                // Fire MouseDown event
-                                MouseCallback?.Invoke(this, downEvent);
-                                Logger.Info($"Left button down at ({windowX}, {windowY})");
-                            }
-                            else // WM_LBUTTONUP
+                            // Fire MouseDown event
+                            MouseClickCallback?.Invoke(this, downEvent);
+                            Logger.Info($"Left button down at ({windowX}, {windowY})");
+                            break;
+
+                        case WM_LBUTTONUP:
+                            var upEvent = new MouseEvent
                             {
-                                var upEvent = new MouseEvent
-                                {
-                                    Timestamp = DateTime.Now,
-                                    X = windowX,
-                                    Y = windowY,
-                                    IsMouseDown = false
-                                };
+                                Timestamp = DateTime.Now,
+                                X = windowX,
+                                Y = windowY,
+                                IsMouseDown = false
+                            };
 
-                                // Fire MouseUp event
-                                MouseCallback?.Invoke(this, upEvent);
-                                Logger.Info($"Left button up at ({windowX}, {windowY})");
-                            }
-                        }
-                        break;
+                            // Fire MouseUp event
+                            MouseClickCallback?.Invoke(this, upEvent);
+                            Logger.Info($"Left button up at ({windowX}, {windowY})");
+                            break;
+
+                        case WM_MOUSEMOVE:
+                            var moveEvent = new MouseEvent
+                            {
+                                Timestamp = DateTime.Now,
+                                X = windowX,
+                                Y = windowY,
+                                IsMouseDown = false // Not relevant for move
+                            };
+                            MouseMoveCallback?.Invoke(this, moveEvent);
+                            break;
+                    }
                 }
             }
 

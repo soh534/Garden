@@ -1,5 +1,8 @@
 {
     "imageSavePath":"E:\\Code\\Garden\\images",
+    "actionSavePath":"E:\\Code\\Garden\\actions",
+    "roiSavePath":"E:\\Code\\Garden\\rois",
+    "scale": 2.0,
 	"thirdPartySdks": [
     {"name":"scrcpy", "path":"E:\\Code\\Thirdparty\\scrcpy-win64-v3.2\\scrcpy-win64-v3.2\\scrcpy.exe"}
 	]

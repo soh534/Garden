@@ -65,6 +65,13 @@ namespace Garden
         private DateTime? _lastActionTimestamp = null;
         private const int TARGET_FRAME_TIME_MS = 33;
 
+        // For ROI selection
+        private bool _isSelectingROI = false;
+        private string? _roiStateName = null;
+        private OpenCvSharp.Point _roiStartPoint;
+        private OpenCvSharp.Point _roiEndPoint;
+        private bool _roiMouseDown = false;
+
         public ScreenshotManager(string imageSavePath, string actionSavePath, string windowTitle = "Garden")
         {
             _imageSavePath = imageSavePath;
@@ -113,7 +120,7 @@ namespace Garden
             return mat;
         }
 
-        internal void ProcessFrames(CancellationToken token, Process proc, ConcurrentQueue<string> commandQueue, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer)
+        internal void ProcessFrames(CancellationToken token, Process proc, ConcurrentQueue<string> commandQueue, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, RoiRecorder roiRecorder)
         {
             IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
             if (hWnd == IntPtr.Zero)
@@ -124,7 +131,7 @@ namespace Garden
 
             Cv2.NamedWindow("Captured Frame", WindowFlags.AutoSize);
 
-            var commandHandler = new CommandHandler(_imageSavePath, mouseRecorder, actionPlayer, actionQueue);
+            var commandHandler = new CommandHandler(_imageSavePath, mouseRecorder, actionPlayer, actionQueue, roiRecorder);
 
             while (!token.IsCancellationRequested && !proc.HasExited)
             {
@@ -133,6 +140,9 @@ namespace Garden
                 try
                 {
                     using Mat frame = CaptureWindow(hWnd);
+
+                    // Update current frame for ROI recorder
+                    roiRecorder.SetCurrentFrame(frame);
 
                     // Process actions - check timing before dequeuing
                     if (actionQueue.TryPeek(out var nextAction))
@@ -192,8 +202,18 @@ namespace Garden
                         _lastActionTimestamp = null;
                     }
 
-                    // Process terminal commands
-                    if (commandQueue.TryDequeue(out var command))
+                    // Move mouse to interpolated position if replaying
+                    var cursorPos = CalculateCurrentCursorPosition(frameStartTime);
+                    if (cursorPos.HasValue)
+                    {
+                        if (WindowManager.Instance.ConvertToScreenCoordinates(cursorPos.Value.X, cursorPos.Value.Y, out int screenX, out int screenY))
+                        {
+                            InputManager.Move(screenX, screenY);
+                        }
+                    }
+
+                    // Process terminal commands (skip if ROI is waiting for input)
+                    if (!roiRecorder.IsWaitingForInput && commandQueue.TryDequeue(out var command))
                     {
                         bool shouldContinue = commandHandler.Handle(command, frame);
                         if (!shouldContinue)
@@ -203,7 +223,8 @@ namespace Garden
                     }
 
                     // Draw and render at the end
-                    DrawAction(frame);
+                    DrawAction(frame, frameStartTime);
+                    DrawRoi(frame, roiRecorder);
                     Cv2.ImShow("Captured Frame", frame);
                     int key = Cv2.WaitKey(1);
                 }
@@ -221,23 +242,39 @@ namespace Garden
             return;
         }
 
-        private void DrawAction(Mat frame)
+        private OpenCvSharp.Point? CalculateCurrentCursorPosition(DateTime currentTime)
         {
-            if (_isInterpolating)
+            if (!_isInterpolating)
+                return null;
+
+            // Calculate interpolation progress (0.0 to 1.0)
+            double totalDuration = (_upTime - _downTime).TotalMilliseconds;
+            double elapsed = (currentTime - _downTime).TotalMilliseconds;
+            double progress = Math.Clamp(elapsed / totalDuration, 0.0, 1.0);
+
+            // Interpolate position
+            int currentX = (int)(_downX + (_upX - _downX) * progress);
+            int currentY = (int)(_downY + (_upY - _downY) * progress);
+
+            return new OpenCvSharp.Point(currentX, currentY);
+        }
+
+        private void DrawAction(Mat frame, DateTime currentTime)
+        {
+            var cursorPos = CalculateCurrentCursorPosition(currentTime);
+            if (cursorPos.HasValue)
             {
-                DateTime now = DateTime.Now;
-
-                // Calculate interpolation progress (0.0 to 1.0)
-                double totalDuration = (_upTime - _downTime).TotalMilliseconds;
-                double elapsed = (now - _downTime).TotalMilliseconds;
-                double progress = Math.Clamp(elapsed / totalDuration, 0.0, 1.0);
-
-                // Interpolate position
-                int currentX = (int)(_downX + (_upX - _downX) * progress);
-                int currentY = (int)(_downY + (_upY - _downY) * progress);
-
                 // Draw circle at interpolated position
-                Cv2.Circle(frame, new OpenCvSharp.Point(currentX, currentY), 10, Scalar.Red, 2);
+                Cv2.Circle(frame, cursorPos.Value, 10, Scalar.Red, 2);
+            }
+        }
+
+        private void DrawRoi(Mat frame, RoiRecorder roiRecorder)
+        {
+            var roi = roiRecorder.GetCurrentRoi();
+            if (roi.HasValue)
+            {
+                Cv2.Rectangle(frame, roi.Value, Scalar.Green, 2);
             }
         }
     }

@@ -26,41 +26,15 @@ namespace Garden
             public bool IsMouseDown { get; set; } // true for down, false for up
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct POINT
-        {
-            public int x;
-            public int y;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct RECT
-        {
-            public int Left, Top, Right, Bottom;
-        }
-
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
-
-        [DllImport("user32.dll")]
-        private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
-
-        [DllImport("user32.dll")]
-        private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
-
-        [DllImport("user32.dll")]
-        private static extern int GetSystemMetrics(int nIndex);
-
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
 
         [DllImport("user32.dll")]
         private static extern IntPtr GetForegroundWindow();
 
-        private const int SM_XVIRTUALSCREEN = 76;  // Left of virtual screen
-        private const int SM_YVIRTUALSCREEN = 77;  // Top of virtual screen
-
         private readonly string _actionDirectory;
+        private MouseEvent? _lastDownEvent = null;
+
         public ActionPlayer(string actionDirectory)
         {
             _actionDirectory = actionDirectory;
@@ -136,7 +110,7 @@ namespace Garden
                 lastEventTime = mouseEvent.Timestamp;
 
                 // Convert window-relative coordinates back to screen coordinates
-                if (ConvertToScreenCoordinates(mouseEvent.X, mouseEvent.Y, out int screenX, out int screenY))
+                if (WindowManager.Instance.ConvertToScreenCoordinates(mouseEvent.X, mouseEvent.Y, out int screenX, out int screenY))
                 {
                     // Move to position first
                     InputManager.Move(screenX, screenY);
@@ -174,7 +148,7 @@ namespace Garden
         public void ExecuteAction(MouseEvent mouseEvent)
         {
             // Convert window-relative coordinates back to screen coordinates
-            if (ConvertToScreenCoordinates(mouseEvent.X, mouseEvent.Y, out int screenX, out int screenY))
+            if (WindowManager.Instance.ConvertToScreenCoordinates(mouseEvent.X, mouseEvent.Y, out int screenX, out int screenY))
             {
                 // Move to position first
                 InputManager.Move(screenX, screenY);
@@ -193,37 +167,5 @@ namespace Garden
             }
         }
 
-        private bool ConvertToScreenCoordinates(int windowX, int windowY, out int screenX, out int screenY)
-        {
-            screenX = 0;
-            screenY = 0;
-
-            IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
-            if (hWnd == IntPtr.Zero)
-            {
-                Logger.Info("Could not find scrcpy window for replay");
-                return false;
-            }
-
-            // Get client area top-left in screen coordinates (same as MouseEventRecorder)
-            GetClientRect(hWnd, out RECT clientRect);
-            POINT clientTopLeft = new POINT { x = clientRect.Left, y = clientRect.Top };
-            ClientToScreen(hWnd, ref clientTopLeft);
-
-            int absoluteX = (int)(clientTopLeft.x) + windowX;
-            int absoluteY = (int)(clientTopLeft.y) + windowY;
-
-            // Get virtual screen offset to map coordinates to (0,0) origin
-            int virtualScreenLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
-            int virtualScreenTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
-
-            int virtualAdjustedX = absoluteX - virtualScreenLeft;
-            int virtualAdjustedY = absoluteY - virtualScreenTop;
-
-            screenX = (int)(virtualAdjustedX);
-            screenY = (int)(virtualAdjustedY);
-
-            return true;
-        }
     }
 }

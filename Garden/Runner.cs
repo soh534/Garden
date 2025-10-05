@@ -41,6 +41,8 @@ namespace Garden
             Console.WriteLine("  reset action                - Clear recorded events (stay recording)");
             Console.WriteLine("  save action <filename>      - Save recorded clicks & end recording");
             Console.WriteLine("  replay action <filename>    - Replay recorded clicks");
+            Console.WriteLine("  record roi <state_name>     - Start recording ROIs for a state");
+            Console.WriteLine("  stop roi                    - Stop ROI recording");
             Console.WriteLine("  quit                        - Exit application");
             Console.WriteLine("==========================================");
             Console.WriteLine();
@@ -66,7 +68,8 @@ namespace Garden
             ScreenshotManager ssManager = new(configManager.ImageSavePath, configManager.ActionSavePath);
             MouseEventRecorder mouseRecorder = new(configManager.ActionSavePath);
             ActionPlayer actionPlayer = new(configManager.ActionSavePath);
-            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc, commandQueue, actionQueue, mouseRecorder, actionPlayer), cts.Token);
+            RoiRecorder roiRecorder = new(configManager.RoiSavePath, commandQueue);
+            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc, commandQueue, actionQueue, mouseRecorder, actionPlayer, roiRecorder), cts.Token);
 
             // Wait for processing to finish (cancellation will be triggered by "quit" command
             processingTask.Wait();
@@ -90,6 +93,7 @@ namespace Garden
             cts.Cancel();
             processingTask.Wait();
             mouseRecorder.Dispose();
+            roiRecorder.Dispose();
             return;
         }
     }

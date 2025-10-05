@@ -17,13 +17,15 @@ namespace Garden
         private readonly MouseEventRecorder _mouseRecorder;
         private readonly ActionPlayer _actionPlayer;
         private readonly ConcurrentQueue<ActionPlayer.MouseEvent> _actionQueue;
+        private readonly RoiRecorder _roiRecorder;
 
-        public CommandHandler(string imageSavePath, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue)
+        public CommandHandler(string imageSavePath, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue, RoiRecorder roiRecorder)
         {
             _imageSavePath = imageSavePath;
             _mouseRecorder = mouseRecorder;
             _actionPlayer = actionPlayer;
             _actionQueue = actionQueue;
+            _roiRecorder = roiRecorder;
         }
 
         public bool Handle(string command, Mat frame)
@@ -62,6 +64,18 @@ namespace Garden
             if (command.StartsWith("replay action ", StringComparison.OrdinalIgnoreCase))
             {
                 HandleRunActionCommand(command);
+                return true; // Continue processing
+            }
+
+            if (command.StartsWith("record roi ", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleRecordRoiCommand(command);
+                return true; // Continue processing
+            }
+
+            if (command.Equals("stop roi", StringComparison.OrdinalIgnoreCase))
+            {
+                _roiRecorder.StopRecording();
                 return true; // Continue processing
             }
 
@@ -123,6 +137,20 @@ namespace Garden
             else
             {
                 Logger.Info("Usage: replay action filename");
+            }
+        }
+
+        private void HandleRecordRoiCommand(string command)
+        {
+            var parts = command.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 3)
+            {
+                string stateName = parts[2].Trim();
+                _roiRecorder.StartRecording(stateName);
+            }
+            else
+            {
+                Logger.Info("Usage: record roi <state_name>");
             }
         }
     }
