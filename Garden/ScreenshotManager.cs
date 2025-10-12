@@ -65,13 +65,6 @@ namespace Garden
         private DateTime? _lastActionTimestamp = null;
         private const int TARGET_FRAME_TIME_MS = 33;
 
-        // For ROI selection
-        private bool _isSelectingROI = false;
-        private string? _roiStateName = null;
-        private OpenCvSharp.Point _roiStartPoint;
-        private OpenCvSharp.Point _roiEndPoint;
-        private bool _roiMouseDown = false;
-
         public ScreenshotManager(string imageSavePath, string actionSavePath, string windowTitle = "Garden")
         {
             _imageSavePath = imageSavePath;
@@ -120,7 +113,7 @@ namespace Garden
             return mat;
         }
 
-        internal void ProcessFrames(CancellationToken token, Process proc, ConcurrentQueue<string> commandQueue, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, RoiRecorder roiRecorder)
+        internal void ProcessFrames(CancellationToken token, Process proc, ConcurrentQueue<string> commandQueue, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, RoiRecorder roiRecorder, StateDetector stateDetector)
         {
             IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
             if (hWnd == IntPtr.Zero)
@@ -143,6 +136,9 @@ namespace Garden
 
                     // Update current frame for ROI recorder
                     roiRecorder.SetCurrentFrame(frame);
+
+                    // Detect current state
+                    var (currentState, confidence) = stateDetector.DetectState(frame);
 
                     // Process actions - check timing before dequeuing
                     if (actionQueue.TryPeek(out var nextAction))
@@ -225,6 +221,8 @@ namespace Garden
                     // Draw and render at the end
                     DrawAction(frame, frameStartTime);
                     DrawRoi(frame, roiRecorder);
+                    DrawDetectedRois(frame, stateDetector, roiRecorder);
+                    DrawState(frame, currentState, confidence);
                     Cv2.ImShow("Captured Frame", frame);
                     int key = Cv2.WaitKey(1);
                 }
@@ -276,6 +274,25 @@ namespace Garden
             {
                 Cv2.Rectangle(frame, roi.Value, Scalar.Green, 2);
             }
+        }
+
+        private void DrawDetectedRois(Mat frame, StateDetector stateDetector, RoiRecorder roiRecorder)
+        {
+            // Don't draw if currently selecting ROI (would interfere with selection box)
+            var currentRoi = roiRecorder.GetCurrentRoi();
+            if (currentRoi.HasValue) return;
+
+            foreach (var box in stateDetector.LastDetectedBoxes)
+            {
+                Cv2.Rectangle(frame, box, Scalar.Blue, 2);
+            }
+        }
+
+        private void DrawState(Mat frame, string? stateName, double confidence)
+        {
+            string displayText = stateName ?? "unknown";
+            Cv2.PutText(frame, $"State: {displayText} ({confidence:P1})", new OpenCvSharp.Point(10, 20),
+                HersheyFonts.HersheySimplex, 0.5, Scalar.Yellow, 1);
         }
     }
 }

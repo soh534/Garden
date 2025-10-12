@@ -79,6 +79,12 @@ namespace Garden
                 return true; // Continue processing
             }
 
+            if (command.StartsWith("remove roi ", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleRemoveRoiCommand(command);
+                return true; // Continue processing
+            }
+
             Logger.Info($"Unknown command: {command}");
             return true; // Continue processing
         }
@@ -151,6 +157,20 @@ namespace Garden
             else
             {
                 Logger.Info("Usage: record roi <state_name>");
+            }
+        }
+
+        private void HandleRemoveRoiCommand(string command)
+        {
+            var parts = command.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 3)
+            {
+                string stateName = parts[2].Trim();
+                _roiRecorder.RemoveState(stateName);
+            }
+            else
+            {
+                Logger.Info("Usage: remove roi <state_name>");
             }
         }
     }

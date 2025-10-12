@@ -69,7 +69,8 @@ namespace Garden
             MouseEventRecorder mouseRecorder = new(configManager.ActionSavePath);
             ActionPlayer actionPlayer = new(configManager.ActionSavePath);
             RoiRecorder roiRecorder = new(configManager.RoiSavePath, commandQueue);
-            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc, commandQueue, actionQueue, mouseRecorder, actionPlayer, roiRecorder), cts.Token);
+            StateDetector stateDetector = new(configManager.RoiSavePath);
+            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc, commandQueue, actionQueue, mouseRecorder, actionPlayer, roiRecorder, stateDetector), cts.Token);
 
             // Wait for processing to finish (cancellation will be triggered by "quit" command
             processingTask.Wait();
