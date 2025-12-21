@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Runtime.InteropServices;
 
 using OpenCvSharp;
 using System.Drawing;
@@ -11,47 +6,25 @@ using System.Drawing.Imaging;
 using System.Diagnostics;
 using System.Collections.Concurrent;
 using NLog;
+using Garden.Bots;
 
 namespace Garden
 {
-    internal class ScreenshotManager
+    internal class FrameManager
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-        // You take a picture via  
-        // 1. open_a_terminal_here.bat  
-        // 2. adb exec-out screencap -p > file.png  
+        private readonly BotBase _bot;
+        private readonly MouseEventRecorder _mouseRecorder;
+        private readonly ActionPlayer _actionPlayer;
+        private readonly RoiRecorder _roiRecorder;
+        private readonly StateDetector _stateDetector;
+        private readonly WindowPositionManager _windowPosManager;
+        // You take a picture via
+        // 1. open_a_terminal_here.bat
+        // 2. adb exec-out screencap -p > file.png
         // 3. this saves file.png which is current phone screen under same path as open_a_terminal_here.bat
 
-        [DllImport("user32.dll", SetLastError = true)]
-        static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
-
-        [DllImport("user32.dll")]
-        static extern bool GetWindowRect(IntPtr hwnd, out RECT lpRect);
-
-        [DllImport("user32.dll")]
-        static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, int nFlags);
-
-        [DllImport("user32.dll")]
-        static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
-
-        [DllImport("user32.dll")]
-        static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct RECT
-        {
-            public int Left, Top, Right, Bottom;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct POINT
-        {
-            public int X, Y;
-        }
-
         private readonly string _imageSavePath;
-        private readonly string _actionSavePath;
-        private readonly string _windowTitle;
 
         // For visual feedback with interpolation
         private bool _isInterpolating = false;
@@ -61,21 +34,35 @@ namespace Garden
         private DateTime _upTime;
 
         // For replay timing
-        private DateTime? _lastActionTime = null;
-        private DateTime? _lastActionTimestamp = null;
+        private DateTime _lastActionTime = DateTime.MinValue;
+        private DateTime _lastActionTimestamp = DateTime.MinValue;
         private const int TARGET_FRAME_TIME_MS = 33;
 
-        public ScreenshotManager(string imageSavePath, string actionSavePath, string windowTitle = "Garden")
+        // For state detection optimization
+        private DateTime _actionQueueEmptiedTime = DateTime.MinValue;
+        private const int ACTION_COMPLETION_WAIT_MS = 5000;
+
+        // Bot control
+        private bool _isBotEnabled = false;
+        public bool IsBotEnabled => _isBotEnabled;
+        public void EnableBot() => _isBotEnabled = true;
+        public void DisableBot() => _isBotEnabled = false;
+
+        public FrameManager(string imageSavePath, BotBase bot, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, RoiRecorder roiRecorder, StateDetector stateDetector, WindowPositionManager windowPosManager)
         {
             _imageSavePath = imageSavePath;
-            _actionSavePath = actionSavePath;
-            _windowTitle = windowTitle;
+            _bot = bot;
+            _mouseRecorder = mouseRecorder;
+            _actionPlayer = actionPlayer;
+            _roiRecorder = roiRecorder;
+            _stateDetector = stateDetector;
+            _windowPosManager = windowPosManager;
         }
 
         public Mat CaptureWindow(IntPtr hWnd)
         {
             // Get bmp of full window (including borders, screen-space)
-            GetWindowRect(hWnd, out RECT windowRect);
+            Win32Api.GetWindowRect(hWnd, out Win32Api.RECT windowRect);
             int windowWidth = windowRect.Right - windowRect.Left;
             int windowHeight = windowRect.Bottom - windowRect.Top;
 
@@ -83,7 +70,7 @@ namespace Garden
             using (var g = Graphics.FromImage(bmp))
             {
                 IntPtr hdc = g.GetHdc();
-                bool success = PrintWindow(hWnd, hdc, 0);
+                bool success = Win32Api.PrintWindow(hWnd, hdc, 0);
                 g.ReleaseHdc(hdc);
 
                 if (!success)
@@ -94,11 +81,11 @@ namespace Garden
             }
 
             // Get client rect in client-space
-            GetClientRect(hWnd, out RECT clientRect);
+            Win32Api.GetClientRect(hWnd, out Win32Api.RECT clientRect);
 
             // Get client top left in screen coordinates
-            POINT clientTopLeft = new POINT { X = clientRect.Left, Y = clientRect.Top };
-            ClientToScreen(hWnd, ref clientTopLeft);
+            Win32Api.POINT clientTopLeft = new Win32Api.POINT { X = clientRect.Left, Y = clientRect.Top };
+            Win32Api.ClientToScreen(hWnd, ref clientTopLeft);
 
             // Calculate offset from window border to client
             int offsetX = clientTopLeft.X - windowRect.Left;
@@ -113,7 +100,7 @@ namespace Garden
             return mat;
         }
 
-        internal void ProcessFrames(CancellationToken token, Process proc, ConcurrentQueue<string> commandQueue, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, RoiRecorder roiRecorder, StateDetector stateDetector)
+        internal void ProcessFrames(CancellationToken token, Process proc, ConcurrentQueue<string> commandQueue, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue)
         {
             IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
             if (hWnd == IntPtr.Zero)
@@ -124,7 +111,7 @@ namespace Garden
 
             Cv2.NamedWindow("Captured Frame", WindowFlags.AutoSize);
 
-            var commandHandler = new CommandHandler(_imageSavePath, mouseRecorder, actionPlayer, actionQueue, roiRecorder);
+            var commandHandler = new CommandHandler(_imageSavePath, _mouseRecorder, _actionPlayer, actionQueue, _roiRecorder, this);
 
             while (!token.IsCancellationRequested && !proc.HasExited)
             {
@@ -133,38 +120,30 @@ namespace Garden
                 try
                 {
                     using Mat frame = CaptureWindow(hWnd);
+                    _windowPosManager.Position(Win32Api.FindWindow(null, "Captured Frame"));
+                    _roiRecorder.SetCurrentFrame(frame);
 
-                    // Update current frame for ROI recorder
-                    roiRecorder.SetCurrentFrame(frame);
-
-                    // Detect current state
-                    var (currentState, confidence) = stateDetector.DetectState(frame);
+                    string currentState = string.Empty;
+                    if (!_roiRecorder.IsRecording && actionQueue.IsEmpty
+                        && (DateTime.Now - _actionQueueEmptiedTime).TotalMilliseconds >= ACTION_COMPLETION_WAIT_MS)
+                    {
+                        currentState = _stateDetector.DetectState(frame);
+                        if (string.IsNullOrEmpty(currentState) && _isBotEnabled)
+                        {
+                            _bot.HandleState(currentState);
+                        }
+                    }
 
                     // Process actions - check timing before dequeuing
                     if (actionQueue.TryPeek(out var nextAction))
                     {
-                        bool shouldExecute = false;
-
-                        if (_lastActionTime == null)
-                        {
-                            // First action, execute immediately
-                            shouldExecute = true;
-                        }
-                        else
-                        {
-                            // Check if enough time has elapsed based on timestamps
-                            var timeSinceLastAction = DateTime.Now - _lastActionTime.Value;
-                            var requiredDelay = nextAction.Timestamp - _lastActionTimestamp.Value;
-
-                            if (timeSinceLastAction >= requiredDelay)
-                            {
-                                shouldExecute = true;
-                            }
-                        }
-
-                        if (shouldExecute)
+                        // Check if enough time has elapsed based on timestamps
+                        var timeSinceLastAction = DateTime.Now - _lastActionTime;
+                        var requiredDelay = nextAction.Timestamp - _lastActionTimestamp;
+                        if (timeSinceLastAction >= requiredDelay)
                         {
                             actionQueue.TryDequeue(out var action);
+                            Debug.Assert(action != null);
                             _lastActionTime = DateTime.Now;
                             _lastActionTimestamp = action.Timestamp;
 
@@ -188,14 +167,25 @@ namespace Garden
                                 _isInterpolating = false;
                             }
 
-                            actionPlayer.ExecuteAction(action);
+                            _actionPlayer.ExecuteAction(action);
                         }
+
                     }
                     else if (_lastActionTime != null)
                     {
-                        // Queue is empty, reset timing
-                        _lastActionTime = null;
-                        _lastActionTimestamp = null;
+                        // Queue is empty, reset timing and mark when it became empty
+                        _lastActionTime = DateTime.MinValue;
+                        _lastActionTimestamp = DateTime.MinValue;
+                        if (_actionQueueEmptiedTime == DateTime.MinValue)
+                        {
+                            _actionQueueEmptiedTime = DateTime.Now;
+                        }
+                    }
+
+                    // Reset emptied time if queue has items
+                    if (!actionQueue.IsEmpty)
+                    {
+                        _actionQueueEmptiedTime = DateTime.MinValue;
                     }
 
                     // Move mouse to interpolated position if replaying
@@ -209,7 +199,7 @@ namespace Garden
                     }
 
                     // Process terminal commands (skip if ROI is waiting for input)
-                    if (!roiRecorder.IsWaitingForInput && commandQueue.TryDequeue(out var command))
+                    if (!_roiRecorder.IsWaitingForInput && commandQueue.TryDequeue(out var command))
                     {
                         bool shouldContinue = commandHandler.Handle(command, frame);
                         if (!shouldContinue)
@@ -220,10 +210,11 @@ namespace Garden
 
                     // Draw and render at the end
                     DrawAction(frame, frameStartTime);
-                    DrawRoi(frame, roiRecorder);
-                    DrawDetectedRois(frame, stateDetector, roiRecorder);
-                    DrawState(frame, currentState, confidence);
+                    DrawCreatingRoi(frame, _roiRecorder);
+                    DrawDetectedRois(frame, _stateDetector, _roiRecorder);
+                    DrawState(frame, currentState);
                     Cv2.ImShow("Captured Frame", frame);
+
                     int key = Cv2.WaitKey(1);
                 }
                 catch (Exception e)
@@ -267,7 +258,7 @@ namespace Garden
             }
         }
 
-        private void DrawRoi(Mat frame, RoiRecorder roiRecorder)
+        private void DrawCreatingRoi(Mat frame, RoiRecorder roiRecorder)
         {
             var roi = roiRecorder.GetCurrentRoi();
             if (roi.HasValue)
@@ -278,21 +269,56 @@ namespace Garden
 
         private void DrawDetectedRois(Mat frame, StateDetector stateDetector, RoiRecorder roiRecorder)
         {
-            // Don't draw if currently selecting ROI (would interfere with selection box)
-            var currentRoi = roiRecorder.GetCurrentRoi();
-            if (currentRoi.HasValue) return;
+            // Don't draw if in ROI recording mode
+            if (roiRecorder.IsRecording) return;
 
-            foreach (var box in stateDetector.LastDetectedBoxes)
+            foreach (var roiDetectionInfo in stateDetector.RoiDetectionInfos)
             {
+                Mat? roiMat = stateDetector.GetRoiMat(roiDetectionInfo.StateName, roiDetectionInfo.RoiName);
+                if (roiMat == null) continue;
+
+                // Calculate bounding box from center and dimensions
+                int topLeftX = roiDetectionInfo.Center.X - roiMat.Width / 2;
+                int topLeftY = roiDetectionInfo.Center.Y - roiMat.Height / 2;
+                Rect box = new Rect(topLeftX, topLeftY, roiMat.Width, roiMat.Height);
+
                 Cv2.Rectangle(frame, box, Scalar.Blue, 2);
+
+                // Draw state name
+                Cv2.PutText(frame, roiDetectionInfo.StateName,
+                    new OpenCvSharp.Point(box.X, box.Y - 35),
+                    HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 1);
+
+                // Draw ROI name
+                Cv2.PutText(frame, roiDetectionInfo.RoiName,
+                    new OpenCvSharp.Point(box.X, box.Y - 20),
+                    HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 1);
+
+                // Draw minVal
+                string minValText = $"{roiDetectionInfo.MinVal:F3}";
+                Cv2.PutText(frame, minValText,
+                    new OpenCvSharp.Point(box.X, box.Y - 5),
+                    HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 1);
             }
         }
 
-        private void DrawState(Mat frame, string? stateName, double confidence)
+        private void DrawState(Mat frame, string? stateName)
         {
-            string displayText = stateName ?? "unknown";
-            Cv2.PutText(frame, $"State: {displayText} ({confidence:P1})", new OpenCvSharp.Point(10, 20),
-                HersheyFonts.HersheySimplex, 0.5, Scalar.Yellow, 1);
+            if (stateName == null)
+            {
+                Cv2.PutText(frame, "State: unknown", new OpenCvSharp.Point(10, 20),
+                    HersheyFonts.HersheySimplex, 0.5, Scalar.Yellow, 1);
+            }
+            else
+            {
+                // Calculate confidence from RoiDetectionInfos for this state
+                var stateRois = _stateDetector.RoiDetectionInfos.Where(r => r.StateName == stateName).ToList();
+                double confidence = stateRois.Count > 0 ? stateRois.Average(r => r.MinVal) : 0.0;
+
+                Cv2.PutText(frame, $"State: {stateName} ({confidence:F3})", new OpenCvSharp.Point(10, 20),
+                    HersheyFonts.HersheySimplex, 0.5, Scalar.Yellow, 1);
+            }
         }
+
     }
 }

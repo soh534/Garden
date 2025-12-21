@@ -14,19 +14,33 @@ namespace Garden
         private readonly Config _config;
 
         // Expose config values as properties
-        public string? ImageSavePath => _config.imageSavePath;
-        public string? ActionSavePath => _config.actionSavePath;
-        public string? RoiSavePath => _config.roiSavePath;
+        public string ImageSavePath => _config.imageSavePath;
+        public string ActionSavePath => _config.actionSavePath;
+        public string RoiSavePath => _config.roiSavePath;
         public double Scale => _config.scale ?? 1.0;
+        public Config.WindowPositions? WindowPositions => _config.windowPositions;
         public Thirdparty GetThirdPartySdk(string name) => _config.thirdPartySdks.Find(sdk => sdk.name.Equals(name));
 
         public class Config
         {
-            public string? imageSavePath { get; set; }
-            public string? actionSavePath { get; set; }
-            public string? roiSavePath { get; set; }
+            public required string imageSavePath { get; set; }
+            public required string actionSavePath { get; set; }
+            public required string roiSavePath { get; set; }
             public double? scale { get; set; }
+            public WindowPositions? windowPositions { get; set; }
             public required List<Thirdparty> thirdPartySdks { get; set; }
+
+            public class WindowPositions
+            {
+                public Position? topLeft { get; set; }
+                public int spacing { get; set; }
+            }
+
+            public class Position
+            {
+                public int x { get; set; }
+                public int y { get; set; }
+            }
 
             public class Thirdparty
             {

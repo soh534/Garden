@@ -2,63 +2,80 @@ using OpenCvSharp;
 using System.Text.Json;
 using NLog;
 using static Garden.RoiRecorder;
+using SavedRoiData = System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<Garden.RoiRecorder.RoiData>>;
 
 namespace Garden
 {
     public class StateDetector
     {
+        public struct RoiDetectionInfo
+        {
+            public string StateName;
+            public string RoiName;
+            public Point Center;
+            public double MinVal;
+        }
+
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private readonly string _roiDirectory;
-        private RoiMetadataFile? _metadata;
-        private Dictionary<string, Mat> _templates = new();
-        private const double MATCH_THRESHOLD = 0.85;
-        private FileSystemWatcher? _fileWatcher;
+        private SavedRoiData _savedRoiData;
+        private Dictionary<string, Mat> _roiMats = new();
+        private FileSystemWatcher _fileWatcher;
+        private readonly object _roiMatsLock = new object();
+
+        public RoiDetectionInfo[] RoiDetectionInfos { get; private set; } = Array.Empty<RoiDetectionInfo>();
+
+        public Mat? GetRoiMat(string stateName, string roiName)
+        {
+            string roiKey = $"{stateName}/{roiName}";
+            return _roiMats.ContainsKey(roiKey) ? _roiMats[roiKey] : null;
+        }
 
         public StateDetector(string roiDirectory)
         {
             _roiDirectory = roiDirectory;
-            LoadMetadata();
-            LoadTemplates();
+            LoadRoiData();
+            LoadRoiMats();
             SetupFileWatcher();
         }
 
         private void SetupFileWatcher()
         {
-            string metadataPath = Path.Combine(_roiDirectory, "roi_metadata.json");
-            if (!File.Exists(metadataPath))
+            string roiDataPath = Path.Combine(_roiDirectory, "roi_metadata.json");
+            if (!File.Exists(roiDataPath))
             {
-                Logger.Warn("ROI metadata file not found, file watcher not started");
+                Logger.Error("ROI metadata file not found, file watcher not started");
                 return;
             }
 
             _fileWatcher = new FileSystemWatcher(_roiDirectory, "roi_metadata.json");
             _fileWatcher.NotifyFilter = NotifyFilters.LastWrite;
-            _fileWatcher.Changed += OnMetadataFileChanged;
+            _fileWatcher.Changed += OnRoiDataFileChanged;
             _fileWatcher.EnableRaisingEvents = true;
             Logger.Info("File watcher setup for roi_metadata.json");
         }
 
-        private void OnMetadataFileChanged(object sender, FileSystemEventArgs e)
+        private void OnRoiDataFileChanged(object sender, FileSystemEventArgs e)
         {
             Logger.Info("roi_metadata.json changed, reloading...");
             Thread.Sleep(100); // Small delay to ensure file write is complete
             Reload();
         }
 
-        private void LoadMetadata()
+        private void LoadRoiData()
         {
-            string metadataPath = Path.Combine(_roiDirectory, "roi_metadata.json");
-            if (!File.Exists(metadataPath))
+            string roiDataPath = Path.Combine(_roiDirectory, "roi_metadata.json");
+            if (!File.Exists(roiDataPath))
             {
-                Logger.Warn($"ROI metadata file not found: {metadataPath}");
+                Logger.Error($"ROI metadata file not found: {roiDataPath}");
                 return;
             }
 
             try
             {
-                string jsonString = File.ReadAllText(metadataPath);
-                _metadata = JsonSerializer.Deserialize<RoiMetadataFile>(jsonString);
-                Logger.Info($"Loaded ROI metadata with {_metadata?.states.Count ?? 0} states");
+                string jsonString = File.ReadAllText(roiDataPath);
+                _savedRoiData = JsonSerializer.Deserialize<SavedRoiData>(jsonString);
+                Logger.Info($"Loaded ROI metadata with {_savedRoiData?.Count ?? 0} states");
             }
             catch (Exception ex)
             {
@@ -66,236 +83,233 @@ namespace Garden
             }
         }
 
-        private void LoadTemplates()
+        private void LoadRoiMats()
         {
-            if (_metadata == null) return;
+            if (_savedRoiData == null) return;
 
-            foreach (var state in _metadata.states)
+            // First, clean up orphaned image files (images not in JSON)
+            CleanupOrphanedImages();
+
+            List<(string stateName, RoiRecorder.RoiData roi)> missingRois = new();
+
+            foreach (var state in _savedRoiData)
             {
                 foreach (var roi in state.Value)
                 {
-                    // Try to load edge-detected version first
-                    string edgeFilename = roi.name.Replace(".png", "_edges.png");
-                    string edgePath = Path.Combine(_roiDirectory, state.Key, edgeFilename);
+                    string key = $"{state.Key}/{roi.name}";
+                    string roiPath = Path.Combine(_roiDirectory, state.Key, roi.name);
 
-                    if (File.Exists(edgePath))
+                    if (File.Exists(roiPath))
                     {
-                        Mat template = Cv2.ImRead(edgePath, ImreadModes.Grayscale);
-                        string key = $"{state.Key}/{roi.name}";
-                        _templates[key] = template;
-                        Logger.Info($"Loaded edge template: {key}");
+                        Mat roiMat = Cv2.ImRead(roiPath, ImreadModes.Color);
+                        _roiMats[key] = roiMat;
+                        Logger.Info($"Loaded ROI: {key}");
                     }
                     else
                     {
-                        // Fall back to original if edges not found
-                        string templatePath = Path.Combine(_roiDirectory, state.Key, roi.name);
-                        if (File.Exists(templatePath))
+                        // Track missing ROI for cleanup
+                        missingRois.Add((state.Key, roi));
+                        Logger.Warn($"ROI not found: {key}");
+                    }
+                }
+            }
+
+            // Clean up missing ROIs from metadata
+            if (missingRois.Count > 0)
+            {
+                CleanupMissingRois(missingRois);
+            }
+        }
+
+        private void CleanupOrphanedImages()
+        {
+            if (_savedRoiData == null) return;
+
+            // Get all ROI names from metadata
+            HashSet<string> knownRois = new();
+            foreach (var state in _savedRoiData)
+            {
+                foreach (var roi in state.Value)
+                {
+                    knownRois.Add($"{state.Key}/{roi.name}");
+                }
+            }
+
+            // Scan all state directories for image files
+            foreach (var stateDir in Directory.GetDirectories(_roiDirectory))
+            {
+                string stateName = Path.GetFileName(stateDir);
+                foreach (var imageFile in Directory.GetFiles(stateDir, "*.png"))
+                {
+                    string imageName = Path.GetFileName(imageFile);
+                    string key = $"{stateName}/{imageName}";
+
+                    if (!knownRois.Contains(key))
+                    {
+                        // This image is not in JSON - delete it
+                        try
                         {
-                            Mat template = Cv2.ImRead(templatePath, ImreadModes.Color);
-                            string key = $"{state.Key}/{roi.name}";
-                            _templates[key] = template;
-                            Logger.Info($"Loaded template: {key}");
+                            File.Delete(imageFile);
+                            Logger.Info($"Deleted orphaned image: {key}");
                         }
-                        else
+                        catch (Exception ex)
                         {
-                            Logger.Warn($"Template not found: {templatePath}");
+                            Logger.Error($"Error deleting orphaned image {key}: {ex.Message}");
                         }
+                    }
+                }
+
+                // Remove empty directories
+                if (Directory.GetFiles(stateDir).Length == 0)
+                {
+                    try
+                    {
+                        Directory.Delete(stateDir);
+                        Logger.Info($"Deleted empty state directory: {stateName}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error($"Error deleting directory {stateName}: {ex.Message}");
                     }
                 }
             }
         }
 
-        public List<Rect> LastDetectedBoxes { get; private set; } = new();
-
-        public (string? stateName, double confidence) DetectState(Mat frame)
+        private void CleanupMissingRois(List<(string stateName, RoiRecorder.RoiData roi)> missingRois)
         {
-            if (_metadata == null) return (null, 0.0);
+            if (_savedRoiData == null) return;
 
-            LastDetectedBoxes.Clear();
-            double bestConfidence = 0.0;
-
-            foreach (var state in _metadata.states)
+            foreach (var (stateName, roi) in missingRois)
             {
-                // Find all ROIs in frame
-                Dictionary<string, OpenCvSharp.Point> foundPositions = new();
-                Dictionary<string, double> similarities = new();
-                bool allRoisFound = true;
-
-                foreach (var roi in state.Value)
-                {
-                    string templateKey = $"{state.Key}/{roi.name}";
-                    if (!_templates.ContainsKey(templateKey))
-                    {
-                        allRoisFound = false;
-                        break;
-                    }
-
-                    Mat template = _templates[templateKey];
-                    var result = FindTemplate(frame, template);
-
-                    if (result.HasValue)
-                    {
-                        foundPositions[roi.name] = result.Value.position;
-                        similarities[roi.name] = result.Value.similarity;
-                    }
-                    else
-                    {
-                        allRoisFound = false;
-                        break;
-                    }
-                }
-
-                // Track best confidence even if state doesn't fully match
-                if (similarities.Count > 0)
-                {
-                    double avgConfidence = similarities.Values.Average();
-                    if (avgConfidence > bestConfidence)
-                    {
-                        bestConfidence = avgConfidence;
-                    }
-                }
-
-                // If all ROIs found, check if relative positions match
-                if (allRoisFound && CheckRelativePositions(state.Value, foundPositions))
-                {
-                    // Store bounding boxes for matched state
-                    foreach (var roi in state.Value)
-                    {
-                        string templateKey = $"{state.Key}/{roi.name}";
-                        if (_templates.ContainsKey(templateKey))
-                        {
-                            Mat template = _templates[templateKey];
-                            var pos = foundPositions[roi.name];
-                            int topLeftX = pos.X - template.Width / 2;
-                            int topLeftY = pos.Y - template.Height / 2;
-                            LastDetectedBoxes.Add(new Rect(topLeftX, topLeftY, template.Width, template.Height));
-                        }
-                    }
-
-                    // Calculate average confidence
-                    double avgConfidence = similarities.Values.Average();
-                    return (state.Key, avgConfidence);
-                }
+                Logger.Info($"Removing missing ROI from metadata: {stateName}/{roi.name}");
+                _savedRoiData[stateName].Remove(roi);
             }
 
-            return (null, bestConfidence);
-        }
+            // Remove empty states
+            var emptyStates = _savedRoiData.Where(s => s.Value.Count == 0).Select(s => s.Key).ToList();
+            foreach (var stateName in emptyStates)
+            {
+                Logger.Info($"Removing empty state: {stateName}");
+                _savedRoiData.Remove(stateName);
+            }
 
-        private (OpenCvSharp.Point position, double similarity)? FindTemplate(Mat frame, Mat template)
-        {
+            // Save updated metadata
             try
             {
-                Mat searchFrame = frame;
-                bool needsDispose = false;
-
-                // If template is grayscale (edge-detected), convert frame to edges too
-                if (template.Channels() == 1)
-                {
-                    Mat gray = new Mat();
-                    Cv2.CvtColor(frame, gray, ColorConversionCodes.BGR2GRAY);
-                    searchFrame = new Mat();
-                    Cv2.Canny(gray, searchFrame, 50, 150);
-                    gray.Dispose();
-                    needsDispose = true;
-                }
-
-                // Perform template matching
-                Mat result = new Mat();
-                Cv2.MatchTemplate(searchFrame, template, result, TemplateMatchModes.CCoeffNormed);
-
-                // Get best match
-                Cv2.MinMaxLoc(result, out _, out double maxVal, out _, out OpenCvSharp.Point maxLoc);
-
-                result.Dispose();
-                if (needsDispose) searchFrame.Dispose();
-
-                // Return center position and similarity if match is good enough
-                if (maxVal >= MATCH_THRESHOLD)
-                {
-                    int centerX = maxLoc.X + template.Width / 2;
-                    int centerY = maxLoc.Y + template.Height / 2;
-                    return (new OpenCvSharp.Point(centerX, centerY), maxVal);
-                }
-
-                return null;
+                string roiDataPath = Path.Combine(_roiDirectory, "roi_metadata.json");
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                string updatedJson = JsonSerializer.Serialize(_savedRoiData, options);
+                File.WriteAllText(roiDataPath, updatedJson);
+                Logger.Info($"Cleaned up {missingRois.Count} missing ROI(s) from metadata");
             }
             catch (Exception ex)
             {
-                Logger.Error($"Error finding template: {ex.Message}");
-                return null;
+                Logger.Error($"Error saving cleaned metadata: {ex.Message}");
             }
         }
 
-        private bool CheckRelativePositions(List<RoiMetadata> expectedRois, Dictionary<string, OpenCvSharp.Point> foundPositions)
+        public string DetectState(Mat frame)
         {
-            // Compare all pairs of ROIs
-            for (int i = 0; i < expectedRois.Count; i++)
+            lock (_roiMatsLock)
             {
-                for (int j = i + 1; j < expectedRois.Count; j++)
+                // Allocate array if size changed
+                if (RoiDetectionInfos.Length != _roiMats.Count)
                 {
-                    var roi1 = expectedRois[i];
-                    var roi2 = expectedRois[j];
+                    RoiDetectionInfos = new RoiDetectionInfo[_roiMats.Count];
+                }
 
-                    if (!foundPositions.ContainsKey(roi1.name) || !foundPositions.ContainsKey(roi2.name))
-                        continue;
+                // Detect all ROIs
+                int index = 0;
+                foreach (var kvp in _roiMats)
+                {
+                    string roiKey = kvp.Key;
+                    Mat roiMat = kvp.Value;
 
-                    // Calculate expected centers
-                    int expectedCenter1X = roi1.x + roi1.width / 2;
-                    int expectedCenter1Y = roi1.y + roi1.height / 2;
-                    int expectedCenter2X = roi2.x + roi2.width / 2;
-                    int expectedCenter2Y = roi2.y + roi2.height / 2;
+                    // Parse state name and ROI name from key (format: "stateName/roiName")
+                    string[] parts = roiKey.Split('/');
+                    string stateName = parts[0];
+                    string roiName = parts[1];
 
-                    // Get found centers
-                    var found1 = foundPositions[roi1.name];
-                    var found2 = foundPositions[roi2.name];
+                    // Perform template matching (SqDiff: exact color matching, 0 = perfect match)
+                    Mat result = new Mat();
+                    Cv2.MatchTemplate(frame, roiMat, result, TemplateMatchModes.SqDiff);
 
-                    // Check horizontal relationship (left/right)
-                    bool expectedLeftOf = expectedCenter1X < expectedCenter2X;
-                    bool foundLeftOf = found1.X < found2.X;
-                    if (expectedLeftOf != foundLeftOf)
+                    // Get best match (minVal for SqDiff - lower is better)
+                    Cv2.MinMaxLoc(result, out double minVal, out _, out Point minLoc, out _);
+
+                    result.Dispose();
+
+                    int centerX = minLoc.X + roiMat.Width / 2;
+                    int centerY = minLoc.Y + roiMat.Height / 2;
+
+                    RoiDetectionInfos[index++] = new RoiDetectionInfo
                     {
-                        Logger.Debug($"Horizontal relationship mismatch: {roi1.name} vs {roi2.name}");
-                        return false;
-                    }
+                        StateName = stateName,
+                        RoiName = roiName,
+                        Center = new Point(centerX, centerY),
+                        MinVal = minVal
+                    };
+                }
 
-                    // Check vertical relationship (above/below)
-                    bool expectedAbove = expectedCenter1Y < expectedCenter2Y;
-                    bool foundAbove = found1.Y < found2.Y;
-                    if (expectedAbove != foundAbove)
+                // Find the best matching state
+                string bestStateName = string.Empty;
+                double bestAvgMinVal = double.MaxValue;
+                RoiDetectionInfo[] bestStateRois = Array.Empty<RoiDetectionInfo>();
+
+                foreach (var state in _savedRoiData)
+                {
+                    string stateName = state.Key;
+                    List<RoiRecorder.RoiData> expectedRois = state.Value;
+
+                    // Find all detected ROIs for this state
+                    var stateDetectedRois = RoiDetectionInfos.Where(r => r.StateName == stateName).ToList();
+
+                    if (stateDetectedRois.Count == expectedRois.Count)
                     {
-                        Logger.Debug($"Vertical relationship mismatch: {roi1.name} vs {roi2.name}");
-                        return false;
+                        // All ROIs found for this state
+                        double avgMinVal = stateDetectedRois.Average(r => r.MinVal);
+
+                        // Check if this state is better (most ROIs, then lowest minVal)
+                        if (avgMinVal < bestAvgMinVal)
+                        {
+                            bestStateName = stateName;
+                            bestAvgMinVal = avgMinVal;
+                            bestStateRois = stateDetectedRois.ToArray();
+                        }
                     }
                 }
-            }
 
-            return true;
+                return bestStateName;
+            }
         }
 
         public void Reload()
         {
-            // Dispose old templates
-            foreach (var template in _templates.Values)
+            lock (_roiMatsLock)
             {
-                template?.Dispose();
+                // Dispose old ROI mats
+                foreach (var roiMat in _roiMats.Values)
+                {
+                    roiMat.Dispose();
+                }
+                _roiMats.Clear();
+
+                // Reload metadata and ROI mats
+                LoadRoiData();
+                LoadRoiMats();
+
+                Logger.Info("StateDetector reloaded");
             }
-            _templates.Clear();
-
-            // Reload metadata and templates
-            LoadMetadata();
-            LoadTemplates();
-
-            Logger.Info("StateDetector reloaded");
         }
 
         public void Dispose()
         {
-            _fileWatcher?.Dispose();
-            foreach (var template in _templates.Values)
+            _fileWatcher.Dispose();
+            foreach (var roiMat in _roiMats.Values)
             {
-                template?.Dispose();
+                roiMat.Dispose();
             }
-            _templates.Clear();
+            _roiMats.Clear();
         }
     }
 }

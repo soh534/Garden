@@ -13,31 +13,6 @@ namespace Garden
         private static WindowManager? _instance;
         private static readonly object _lock = new object();
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct POINT
-        {
-            public int x;
-            public int y;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct RECT
-        {
-            public int Left, Top, Right, Bottom;
-        }
-
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
-
-        [DllImport("user32.dll")]
-        private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
-
-        [DllImport("user32.dll")]
-        private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
-
-        [DllImport("user32.dll")]
-        private static extern int GetSystemMetrics(int nIndex);
-
         private string _windowTitle = "Garden";
         private double _scale = 1.0;
 
@@ -73,7 +48,7 @@ namespace Garden
 
         public IntPtr GetScrcpyWindowHandle()
         {
-            return FindWindow(null, _windowTitle);
+            return Win32Api.FindWindow(null, _windowTitle);
         }
 
         public IntPtr GetWindowHandle(WindowType windowType)
@@ -84,7 +59,7 @@ namespace Garden
                 WindowType.CapturedFrame => "Captured Frame",
                 _ => _windowTitle
             };
-            return FindWindow(null, windowTitle);
+            return Win32Api.FindWindow(null, windowTitle);
         }
 
         public string GetWindowTitle()
@@ -99,9 +74,6 @@ namespace Garden
 
         public bool ConvertToScreenCoordinates(int windowX, int windowY, out int screenX, out int screenY)
         {
-            const int SM_XVIRTUALSCREEN = 76;
-            const int SM_YVIRTUALSCREEN = 77;
-
             screenX = 0;
             screenY = 0;
 
@@ -111,17 +83,17 @@ namespace Garden
                 return false;
             }
 
-            // Get client area top-left in screen coordinates (same as MouseEventRecorder)
-            GetClientRect(hWnd, out RECT clientRect);
-            POINT clientTopLeft = new POINT { x = clientRect.Left, y = clientRect.Top };
-            ClientToScreen(hWnd, ref clientTopLeft);
+            // Get client area top-left in screen coordinates (same as MouseEventReporter)
+            Win32Api.GetClientRect(hWnd, out Win32Api.RECT clientRect);
+            Win32Api.POINT clientTopLeft = new Win32Api.POINT { X = clientRect.Left, Y = clientRect.Top };
+            Win32Api.ClientToScreen(hWnd, ref clientTopLeft);
 
-            int absoluteX = (int)(clientTopLeft.x) + windowX;
-            int absoluteY = (int)(clientTopLeft.y) + windowY;
+            int absoluteX = (int)(clientTopLeft.X) + windowX;
+            int absoluteY = (int)(clientTopLeft.Y) + windowY;
 
             // Get virtual screen offset to map coordinates to (0,0) origin
-            int virtualScreenLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
-            int virtualScreenTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
+            int virtualScreenLeft = Win32Api.GetSystemMetrics(Win32Api.SM_XVIRTUALSCREEN);
+            int virtualScreenTop = Win32Api.GetSystemMetrics(Win32Api.SM_YVIRTUALSCREEN);
 
             int virtualAdjustedX = absoluteX - virtualScreenLeft;
             int virtualAdjustedY = absoluteY - virtualScreenTop;

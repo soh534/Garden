@@ -10,7 +10,7 @@ using System.Collections.Concurrent;
 
 namespace Garden
 {
-    public class CommandHandler
+    internal class CommandHandler
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private readonly string _imageSavePath;
@@ -18,14 +18,16 @@ namespace Garden
         private readonly ActionPlayer _actionPlayer;
         private readonly ConcurrentQueue<ActionPlayer.MouseEvent> _actionQueue;
         private readonly RoiRecorder _roiRecorder;
+        private readonly FrameManager _frameManager;
 
-        public CommandHandler(string imageSavePath, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue, RoiRecorder roiRecorder)
+        public CommandHandler(string imageSavePath, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue, RoiRecorder roiRecorder, FrameManager frameManager)
         {
             _imageSavePath = imageSavePath;
             _mouseRecorder = mouseRecorder;
             _actionPlayer = actionPlayer;
             _actionQueue = actionQueue;
             _roiRecorder = roiRecorder;
+            _frameManager = frameManager;
         }
 
         public bool Handle(string command, Mat frame)
@@ -85,8 +87,53 @@ namespace Garden
                 return true; // Continue processing
             }
 
+            if (command.Equals("list roi", StringComparison.OrdinalIgnoreCase))
+            {
+                _roiRecorder.ListStates();
+                return true; // Continue processing
+            }
+
+            if (command.Equals("start bot", StringComparison.OrdinalIgnoreCase))
+            {
+                _frameManager.EnableBot();
+                Console.WriteLine("Bot started.");
+                return true; // Continue processing
+            }
+
+            if (command.Equals("stop bot", StringComparison.OrdinalIgnoreCase))
+            {
+                _frameManager.DisableBot();
+                Console.WriteLine("Bot stopped.");
+                return true; // Continue processing
+            }
+
+            if (command.Equals("help", StringComparison.OrdinalIgnoreCase))
+            {
+                ShowHelp();
+                return true; // Continue processing
+            }
+
             Logger.Info($"Unknown command: {command}");
             return true; // Continue processing
+        }
+
+        public static void ShowHelp()
+        {
+            Console.WriteLine("\nAvailable commands:");
+            Console.WriteLine("  save image <filename.png>   - Save screenshot");
+            Console.WriteLine("  record action               - Start recording mouse clicks");
+            Console.WriteLine("  reset action                - Clear recorded events (stay recording)");
+            Console.WriteLine("  save action <filename>      - Save recorded clicks & end recording");
+            Console.WriteLine("  replay action <filename>    - Replay recorded clicks");
+            Console.WriteLine("  record roi <state_name>     - Start recording ROIs for a state");
+            Console.WriteLine("  stop roi                    - Stop ROI recording");
+            Console.WriteLine("  list roi                    - List all ROI states");
+            Console.WriteLine("  remove roi <state_name>     - Remove ROI state and its files");
+            Console.WriteLine("  start bot                   - Start the bot automation");
+            Console.WriteLine("  stop bot                    - Stop the bot automation");
+            Console.WriteLine("  help                        - Show this help message");
+            Console.WriteLine("  quit                        - Exit application");
+            Console.WriteLine();
         }
 
         private void HandleSaveCommand(string command, Mat frame)

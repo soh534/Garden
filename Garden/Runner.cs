@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
 using NLog;
+using Garden.Bots;
 
 using Thirdparty = Garden.ConfigManager.Config.Thirdparty;
 
@@ -31,21 +32,17 @@ namespace Garden
             Process? proc = scrcpyManager.Start();
             Debug.Assert(proc != null);
 
+            // Position scrcpy window
+            // Create window position manager
+            WindowPositionManager windowPosManager = new(configManager.WindowPositions);
+            windowPosManager.PositionAndAdvance(proc.MainWindowHandle);
+
             Console.WriteLine();
             Console.WriteLine("==========================================");
             Console.WriteLine("     Garden - Ready for Commands");
             Console.WriteLine("==========================================");
-            Console.WriteLine("Available commands:");
-            Console.WriteLine("  save image <filename.png>   - Save screenshot");
-            Console.WriteLine("  record action               - Start recording mouse clicks");
-            Console.WriteLine("  reset action                - Clear recorded events (stay recording)");
-            Console.WriteLine("  save action <filename>      - Save recorded clicks & end recording");
-            Console.WriteLine("  replay action <filename>    - Replay recorded clicks");
-            Console.WriteLine("  record roi <state_name>     - Start recording ROIs for a state");
-            Console.WriteLine("  stop roi                    - Stop ROI recording");
-            Console.WriteLine("  quit                        - Exit application");
+            CommandHandler.ShowHelp();
             Console.WriteLine("==========================================");
-            Console.WriteLine();
             Console.Write("Enter command: ");
 
             var cts = new CancellationTokenSource();
@@ -65,12 +62,19 @@ namespace Garden
                 }
             });
 
-            ScreenshotManager ssManager = new(configManager.ImageSavePath, configManager.ActionSavePath);
             MouseEventRecorder mouseRecorder = new(configManager.ActionSavePath);
             ActionPlayer actionPlayer = new(configManager.ActionSavePath);
             RoiRecorder roiRecorder = new(configManager.RoiSavePath, commandQueue);
             StateDetector stateDetector = new(configManager.RoiSavePath);
-            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc, commandQueue, actionQueue, mouseRecorder, actionPlayer, roiRecorder, stateDetector), cts.Token);
+
+            // Initialize bot with action queue, detector, and action player
+            // Bot for Garden game
+            BotBase bot = new GardenBot();
+            bot.Initialize(actionQueue, stateDetector, actionPlayer);
+            FrameManager ssManager = new(configManager.ImageSavePath, bot, mouseRecorder, actionPlayer, roiRecorder, stateDetector, windowPosManager);
+
+
+            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc, commandQueue, actionQueue), cts.Token);
 
             // Wait for processing to finish (cancellation will be triggered by "quit" command
             processingTask.Wait();

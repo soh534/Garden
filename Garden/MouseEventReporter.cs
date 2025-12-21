@@ -15,62 +15,11 @@ namespace Garden
             public bool IsMouseDown { get; set; } // true for down, false for up
         }
 
-        // Win32 API declarations
-        private const int WH_MOUSE_LL = 14;
-        private const int WM_LBUTTONDOWN = 0x0201;
-        private const int WM_LBUTTONUP = 0x0202;
-        private const int WM_MOUSEMOVE = 0x0200;
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct POINT
-        {
-            public int x;
-            public int y;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct RECT
-        {
-            public int Left, Top, Right, Bottom;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct MSLLHOOKSTRUCT
-        {
-            public POINT pt;
-            public uint mouseData;
-            public uint flags;
-            public uint time;
-            public IntPtr dwExtraInfo;
-        }
-
-        private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
-
-        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
-
-        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool UnhookWindowsHookEx(IntPtr hhk);
-
-        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        private static extern IntPtr GetModuleHandle(string lpModuleName);
-
-
-        [DllImport("user32.dll")]
-        private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
-
-        [DllImport("user32.dll")]
-        private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
-
         // Events
         public event EventHandler<MouseEvent>? MouseClickCallback;
         public event EventHandler<MouseEvent>? MouseMoveCallback;
 
-        private LowLevelMouseProc _proc;
+        private Win32Api.LowLevelMouseProc _proc;
         private IntPtr _hookID = IntPtr.Zero;
         private bool _isReporting = false;
         private readonly WindowType _windowType;
@@ -113,7 +62,7 @@ namespace Garden
         {
             if (_isReporting)
             {
-                UnhookWindowsHookEx(_hookID);
+                Win32Api.UnhookWindowsHookEx(_hookID);
                 _isReporting = false;
             }
         }
@@ -128,32 +77,32 @@ namespace Garden
                 return false;
 
             // Get client rectangle (just the content area)
-            GetClientRect(hWnd, out RECT clientRect);
+            Win32Api.GetClientRect(hWnd, out Win32Api.RECT clientRect);
 
             // Get client area top-left in screen coordinates
-            POINT clientTopLeft = new POINT { x = clientRect.Left, y = clientRect.Top };
-            ClientToScreen(hWnd, ref clientTopLeft);
+            Win32Api.POINT clientTopLeft = new Win32Api.POINT { X = clientRect.Left, Y = clientRect.Top };
+            Win32Api.ClientToScreen(hWnd, ref clientTopLeft);
 
             // Check if click is within client area
-            if (screenX >= clientTopLeft.x && screenX < clientTopLeft.x + clientRect.Right &&
-                screenY >= clientTopLeft.y && screenY < clientTopLeft.y + clientRect.Bottom)
+            if (screenX >= clientTopLeft.X && screenX < clientTopLeft.X + clientRect.Right &&
+                screenY >= clientTopLeft.Y && screenY < clientTopLeft.Y + clientRect.Bottom)
             {
                 // Convert to window-relative coordinates
-                windowX = screenX - clientTopLeft.x;
-                windowY = screenY - clientTopLeft.y;
+                windowX = screenX - clientTopLeft.X;
+                windowY = screenY - clientTopLeft.Y;
                 return true;
             }
 
             return false; // Click was outside the window
         }
 
-        private IntPtr SetHook(LowLevelMouseProc proc)
+        private IntPtr SetHook(Win32Api.LowLevelMouseProc proc)
         {
             using (var curProcess = System.Diagnostics.Process.GetCurrentProcess())
             using (var curModule = curProcess.MainModule!)
             {
-                return SetWindowsHookEx(WH_MOUSE_LL, proc,
-                    GetModuleHandle(curModule.ModuleName!), 0);
+                return Win32Api.SetWindowsHookEx(Win32Api.WH_MOUSE_LL, proc,
+                    Win32Api.GetModuleHandle(curModule.ModuleName!), 0);
             }
         }
 
@@ -161,19 +110,19 @@ namespace Garden
         {
             if (nCode >= 0 && _isReporting)
             {
-                var hookStruct = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+                var hookStruct = Marshal.PtrToStructure<Win32Api.MSLLHOOKSTRUCT>(lParam);
 
                 // Scale coordinates using config value
                 double scale = WindowManager.Instance.GetScale();
-                int scaledX = (int)(hookStruct.pt.x / scale);
-                int scaledY = (int)(hookStruct.pt.y / scale);
+                int scaledX = (int)(hookStruct.Pt.X / scale);
+                int scaledY = (int)(hookStruct.Pt.Y / scale);
 
                 // Convert screen coordinates to scrcpy window coordinates
                 if (ConvertToWindowCoordinates(scaledX, scaledY, out int windowX, out int windowY))
                 {
                     switch ((int)wParam)
                     {
-                        case WM_LBUTTONDOWN:
+                        case Win32Api.WM_LBUTTONDOWN:
                             var downEvent = new MouseEvent
                             {
                                 Timestamp = DateTime.Now,
@@ -187,7 +136,7 @@ namespace Garden
                             Logger.Info($"Left button down at ({windowX}, {windowY})");
                             break;
 
-                        case WM_LBUTTONUP:
+                        case Win32Api.WM_LBUTTONUP:
                             var upEvent = new MouseEvent
                             {
                                 Timestamp = DateTime.Now,
@@ -201,7 +150,7 @@ namespace Garden
                             Logger.Info($"Left button up at ({windowX}, {windowY})");
                             break;
 
-                        case WM_MOUSEMOVE:
+                        case Win32Api.WM_MOUSEMOVE:
                             var moveEvent = new MouseEvent
                             {
                                 Timestamp = DateTime.Now,
@@ -215,7 +164,7 @@ namespace Garden
                 }
             }
 
-            return CallNextHookEx(_hookID, nCode, wParam, lParam);
+            return Win32Api.CallNextHookEx(_hookID, nCode, wParam, lParam);
         }
 
         public void Dispose()

@@ -8,15 +8,7 @@ namespace Garden
     public class ActionPlayer
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-        public class ActionEventArgs : EventArgs
-        {
-            public int WindowX { get; set; }
-            public int WindowY { get; set; }
-            public bool IsMouseDown { get; set; }
-        }
 
-        // Events for visual feedback
-        public event EventHandler<ActionEventArgs>? ActionPerformed;
         // Reuse MouseEvent structure from MouseEventRecorder
         public class MouseEvent
         {
@@ -25,12 +17,6 @@ namespace Garden
             public int Y { get; set; } // Window-relative coordinates
             public bool IsMouseDown { get; set; } // true for down, false for up
         }
-
-        [DllImport("user32.dll")]
-        private static extern bool SetForegroundWindow(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetForegroundWindow();
 
         private readonly string _actionDirectory;
         private MouseEvent? _lastDownEvent = null;
@@ -87,8 +73,8 @@ namespace Garden
             }
 
             // Bring scrcpy window to foreground and wait for it to be active
-            SetForegroundWindow(hWnd);
-            while (GetForegroundWindow() != hWnd)
+            Win32Api.SetForegroundWindow(hWnd);
+            while (Win32Api.GetForegroundWindow() != hWnd)
             {
                 Thread.Sleep(100);
             }
@@ -119,14 +105,6 @@ namespace Garden
                     // Perform mouse action based on IsMouseDown
                     Logger.Info($"Mouse {(mouseEvent.IsMouseDown ? "down" : "up")} at ({mouseEvent.X}, {mouseEvent.Y}) -> screen ({screenX}, {screenY})");
                     InputManager.MouseEvent(mouseEvent.IsMouseDown);
-
-                    // Fire event for visual feedback
-                    ActionPerformed?.Invoke(this, new ActionEventArgs
-                    {
-                        WindowX = mouseEvent.X,
-                        WindowY = mouseEvent.Y,
-                        IsMouseDown = mouseEvent.IsMouseDown
-                    });
                 }
             }
 
@@ -156,14 +134,6 @@ namespace Garden
 
                 // Perform mouse action based on IsMouseDown
                 InputManager.MouseEvent(mouseEvent.IsMouseDown);
-
-                // Fire event for visual feedback
-                ActionPerformed?.Invoke(this, new ActionEventArgs
-                {
-                    WindowX = mouseEvent.X,
-                    WindowY = mouseEvent.Y,
-                    IsMouseDown = mouseEvent.IsMouseDown
-                });
             }
         }
 
