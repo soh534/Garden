@@ -1,10 +1,5 @@
 namespace Garden.Bots
 {
-    /// <summary>
-    /// Bot for Garden game.
-    /// To use: In Runner.cs, change the bot line to:
-    ///   BotBase bot = new GardenBot();
-    /// </summary>
     public class GardenBot : BotBase
     {
         public override void HandleState(string stateName)
@@ -15,19 +10,19 @@ namespace Garden.Bots
             switch (stateName)
             {
                 case "lockscreen":
-                    SwipeFromRoi("lock", 208, 492);
+                    QueueAction("lock", "dragup");
                     break;
                 case "firstscreen":
-                    RunAction("scrollright");
+                    QueueAction("scrollright");
                     break;
                 case "secondscreen":
-                    Click("mirrativicon");
+                    QueueAction("mirrativicon", "click");
                     break;
                 case "needtopressokbutton":
-                    Click("okbutton");
+                    QueueAction("okbutton", "click");
                     break;
                 case "startmirrativ":
-                    Click("livegamebutton");
+                    QueueAction("livegamebutton", "click");
                     break;
                 case "livegamepage":
                     break;

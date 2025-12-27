@@ -63,7 +63,7 @@ namespace Garden
             });
 
             MouseEventRecorder mouseRecorder = new(configManager.ActionSavePath);
-            ActionPlayer actionPlayer = new(configManager.ActionSavePath);
+            ActionPlayer actionPlayer = new(configManager.ActionSavePath, actionQueue);
             RoiRecorder roiRecorder = new(configManager.RoiSavePath, commandQueue);
             StateDetector stateDetector = new(configManager.RoiSavePath);
 

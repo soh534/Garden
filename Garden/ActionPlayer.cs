@@ -19,16 +19,18 @@ namespace Garden
         }
 
         private readonly string _actionDirectory;
+        private readonly ConcurrentQueue<MouseEvent> _actionQueue;
         private MouseEvent? _lastDownEvent = null;
 
-        public ActionPlayer(string actionDirectory)
+        public ActionPlayer(string actionDirectory, ConcurrentQueue<MouseEvent> actionQueue)
         {
             _actionDirectory = actionDirectory;
+            _actionQueue = actionQueue;
         }
 
-        public List<MouseEvent>? LoadAction(string filename)
+        private List<MouseEvent>? LoadAction(string actionName)
         {
-            string filePath = Path.Combine(_actionDirectory, filename);
+            string filePath = Path.Combine(_actionDirectory, actionName);
 
             if (!File.Exists(filePath))
             {
@@ -43,11 +45,11 @@ namespace Garden
 
                 if (events == null || events.Count == 0)
                 {
-                    Logger.Info($"No events found in {filename}");
+                    Logger.Info($"No events found in {actionName}");
                     return null;
                 }
 
-                Logger.Info($"Loaded {events.Count} events from {filename}");
+                Logger.Info($"Loaded {events.Count} events from {actionName}");
                 return events;
             }
             catch (Exception ex)
@@ -57,69 +59,40 @@ namespace Garden
             }
         }
 
-        public void ReplayAction(string filename)
+        public void QueueReplay(string actionName)
         {
-            var events = LoadAction(filename);
-            if (events == null) return;
-
-            Logger.Info($"Replaying {events.Count} mouse events...");
-
-            // Get scrcpy window for coordinate conversion
-            IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
-            if (hWnd == IntPtr.Zero)
-            {
-                Logger.Error("Cannot find scrcpy window for replay.");
-                return;
-            }
-
-            // Bring scrcpy window to foreground and wait for it to be active
-            Win32Api.SetForegroundWindow(hWnd);
-            while (Win32Api.GetForegroundWindow() != hWnd)
-            {
-                Thread.Sleep(100);
-            }
-
-            DateTime? lastEventTime = null;
-
-            foreach (var mouseEvent in events)
-            {
-                // Calculate delay based on timestamp difference
-                if (lastEventTime.HasValue)
-                {
-                    var timeDelta = mouseEvent.Timestamp - lastEventTime.Value;
-                    int delayMs = (int)timeDelta.TotalMilliseconds;
-                    if (delayMs > 0 && delayMs < 5000) // Cap at 5 seconds max delay
-                    {
-                        Thread.Sleep(delayMs);
-                    }
-                }
-                lastEventTime = mouseEvent.Timestamp;
-
-                // Convert window-relative coordinates back to screen coordinates
-                if (WindowManager.Instance.ConvertToScreenCoordinates(mouseEvent.X, mouseEvent.Y, out int screenX, out int screenY))
-                {
-                    // Move to position first
-                    InputManager.Move(screenX, screenY);
-                    Thread.Sleep(10); // Small delay for movement
-
-                    // Perform mouse action based on IsMouseDown
-                    Logger.Info($"Mouse {(mouseEvent.IsMouseDown ? "down" : "up")} at ({mouseEvent.X}, {mouseEvent.Y}) -> screen ({screenX}, {screenY})");
-                    InputManager.MouseEvent(mouseEvent.IsMouseDown);
-                }
-            }
-
-            Logger.Info("Replay completed.");
-        }
-
-        public void QueueReplay(string filename, ConcurrentQueue<MouseEvent> actionQueue)
-        {
-            var events = LoadAction(filename);
+            var events = LoadAction(actionName);
             if (events == null) return;
 
             Logger.Info($"Queueing {events.Count} events for replay");
             foreach (var evt in events)
             {
-                actionQueue.Enqueue(evt);
+                _actionQueue.Enqueue(evt);
+            }
+        }
+
+        public void QueueReplayWithOffset(string actionName, int roiCenterX, int roiCenterY)
+        {
+            var events = LoadAction(actionName);
+            if (events == null || events.Count == 0) return;
+
+            var firstEvent = events[0];
+            int offsetX = roiCenterX - firstEvent.X;
+            int offsetY = roiCenterY - firstEvent.Y;
+
+            Logger.Info($"Queueing {events.Count} events based on ROI center ({roiCenterX}, {roiCenterY}), offset ({offsetX}, {offsetY})");
+
+            // Apply offset to all events and enqueue
+            foreach (var evt in events)
+            {
+                var modifiedEvent = new MouseEvent
+                {
+                    Timestamp = evt.Timestamp,
+                    X = evt.X + offsetX,
+                    Y = evt.Y + offsetY,
+                    IsMouseDown = evt.IsMouseDown
+                };
+                _actionQueue.Enqueue(modifiedEvent);
             }
         }
 
@@ -136,6 +109,5 @@ namespace Garden
                 InputManager.MouseEvent(mouseEvent.IsMouseDown);
             }
         }
-
     }
 }
