@@ -185,7 +185,7 @@ namespace Garden
                 {
                     filename += ".json";
                 }
-                _actionPlayer.QueueReplay(filename, _actionQueue);
+                _actionPlayer.QueueReplay(filename);
             }
             else
             {

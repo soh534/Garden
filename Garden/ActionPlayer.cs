@@ -1,7 +1,10 @@
+using Garden;
+using NLog;
+using System;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using NLog;
-using System.Collections.Concurrent;
 
 namespace Garden
 {
@@ -20,7 +23,19 @@ namespace Garden
 
         private readonly string _actionDirectory;
         private readonly ConcurrentQueue<MouseEvent> _actionQueue;
-        private MouseEvent? _lastDownEvent = null;
+
+        // real time information of executing action
+        private bool _isInterpolating = false;
+        private int _downX, _downY;
+        private int _upX, _upY;
+        private DateTime _downTime;
+        private DateTime _upTime;
+        private DateTime _lastActionTime = DateTime.MinValue;
+        private DateTime _lastActionTimestamp = DateTime.MinValue;
+
+        // Current cursor position for visualization
+        private OpenCvSharp.Point? _currentCursorPosition = null;
+        public OpenCvSharp.Point? CurrentCursorPosition => _currentCursorPosition;
 
         public ActionPlayer(string actionDirectory, ConcurrentQueue<MouseEvent> actionQueue)
         {
@@ -96,17 +111,79 @@ namespace Garden
             }
         }
 
-        public void ExecuteAction(MouseEvent mouseEvent)
+        private OpenCvSharp.Point? CalculateCurrentCursorPosition(DateTime currentTime)
         {
-            // Convert window-relative coordinates back to screen coordinates
-            if (WindowManager.Instance.ConvertToScreenCoordinates(mouseEvent.X, mouseEvent.Y, out int screenX, out int screenY))
-            {
-                // Move to position first
-                InputManager.Move(screenX, screenY);
-                Thread.Sleep(10); // Small delay for movement
+            if (!_isInterpolating)
+                return null;
 
-                // Perform mouse action based on IsMouseDown
-                InputManager.MouseEvent(mouseEvent.IsMouseDown);
+            // Calculate interpolation progress (0.0 to 1.0)
+            double totalDuration = (_upTime - _downTime).TotalMilliseconds;
+            double elapsed = (currentTime - _downTime).TotalMilliseconds;
+            double progress = Math.Clamp(elapsed / totalDuration, 0.0, 1.0);
+
+            // Interpolate position
+            int currentX = (int)(_downX + (_upX - _downX) * progress);
+            int currentY = (int)(_downY + (_upY - _downY) * progress);
+
+            return new OpenCvSharp.Point(currentX, currentY);
+        }
+
+        public void StepAction(DateTime time)
+        {
+            // Process actions - check timing before dequeuing
+            if (_actionQueue.TryPeek(out var nextAction))
+            {
+                // Check if enough time has elapsed based on timestamps
+                var timeSinceLastAction = DateTime.Now - _lastActionTime;
+                var requiredDelay = nextAction.Timestamp - _lastActionTimestamp;
+                if (timeSinceLastAction >= requiredDelay)
+                {
+                    _actionQueue.TryDequeue(out var action);
+                    Debug.Assert(action != null);
+                    _lastActionTime = DateTime.Now;
+                    _lastActionTimestamp = action.Timestamp;
+
+                    if (action.IsMouseDown)
+                    {
+                        // Mouse down - peek at next action to get up position
+                        if (_actionQueue.TryPeek(out var upAction))
+                        {
+                            _downX = action.X;
+                            _downY = action.Y;
+                            _downTime = DateTime.Now;
+                            _upX = upAction.X;
+                            _upY = upAction.Y;
+                            _upTime = DateTime.Now + (upAction.Timestamp - action.Timestamp);
+                            _isInterpolating = true;
+                        }
+                    }
+                    else
+                    {
+                        // Mouse up - stop interpolating
+                        _isInterpolating = false;
+                    }
+
+                    // Convert window-relative coordinates back to screen coordinates
+                    if (WindowManager.Instance.ConvertToScreenCoordinates(action.X, action.Y, out int screenX, out int screenY))
+                    {
+                        // Move to position first
+                        InputManager.Move(screenX, screenY);
+                        Thread.Sleep(10); // Small delay for movement
+
+                        // Perform mouse action based on IsMouseDown
+                        InputManager.MouseEvent(action.IsMouseDown);
+                    }
+                }
+            }
+
+            // Move mouse to interpolated position if replaying
+            _currentCursorPosition = CalculateCurrentCursorPosition(time);
+            if (_currentCursorPosition.HasValue)
+            {
+                if (WindowManager.Instance.ConvertToScreenCoordinates(_currentCursorPosition.Value.X, _currentCursorPosition.Value.Y, out int screenX, out int screenY))
+                {
+                    InputManager.Move(screenX, screenY);
+                }
             }
         }
     }

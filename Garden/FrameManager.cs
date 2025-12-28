@@ -26,21 +26,7 @@ namespace Garden
 
         private readonly string _imageSavePath;
 
-        // For visual feedback with interpolation
-        private bool _isInterpolating = false;
-        private int _downX, _downY;
-        private int _upX, _upY;
-        private DateTime _downTime;
-        private DateTime _upTime;
-
-        // For replay timing
-        private DateTime _lastActionTime = DateTime.MinValue;
-        private DateTime _lastActionTimestamp = DateTime.MinValue;
         private const int TARGET_FRAME_TIME_MS = 33;
-
-        // For state detection optimization
-        private DateTime _actionQueueEmptiedTime = DateTime.MinValue;
-        private const int ACTION_COMPLETION_WAIT_MS = 5000;
 
         // Bot control
         private bool _isBotEnabled = false;
@@ -124,8 +110,7 @@ namespace Garden
                     _roiRecorder.SetCurrentFrame(frame);
 
                     string currentState = string.Empty;
-                    if (!_roiRecorder.IsRecording && actionQueue.IsEmpty
-                        && (DateTime.Now - _actionQueueEmptiedTime).TotalMilliseconds >= ACTION_COMPLETION_WAIT_MS)
+                    if (!_roiRecorder.IsRecording && actionQueue.IsEmpty)
                     {
                         currentState = _stateDetector.DetectState(frame);
                         if (string.IsNullOrEmpty(currentState) && _isBotEnabled)
@@ -134,69 +119,7 @@ namespace Garden
                         }
                     }
 
-                    // Process actions - check timing before dequeuing
-                    if (actionQueue.TryPeek(out var nextAction))
-                    {
-                        // Check if enough time has elapsed based on timestamps
-                        var timeSinceLastAction = DateTime.Now - _lastActionTime;
-                        var requiredDelay = nextAction.Timestamp - _lastActionTimestamp;
-                        if (timeSinceLastAction >= requiredDelay)
-                        {
-                            actionQueue.TryDequeue(out var action);
-                            Debug.Assert(action != null);
-                            _lastActionTime = DateTime.Now;
-                            _lastActionTimestamp = action.Timestamp;
-
-                            if (action.IsMouseDown)
-                            {
-                                // Mouse down - peek at next action to get up position
-                                if (actionQueue.TryPeek(out var upAction))
-                                {
-                                    _downX = action.X;
-                                    _downY = action.Y;
-                                    _downTime = DateTime.Now;
-                                    _upX = upAction.X;
-                                    _upY = upAction.Y;
-                                    _upTime = DateTime.Now + (upAction.Timestamp - action.Timestamp);
-                                    _isInterpolating = true;
-                                }
-                            }
-                            else
-                            {
-                                // Mouse up - stop interpolating
-                                _isInterpolating = false;
-                            }
-
-                            _actionPlayer.ExecuteAction(action);
-                        }
-
-                    }
-                    else if (_lastActionTime != null)
-                    {
-                        // Queue is empty, reset timing and mark when it became empty
-                        _lastActionTime = DateTime.MinValue;
-                        _lastActionTimestamp = DateTime.MinValue;
-                        if (_actionQueueEmptiedTime == DateTime.MinValue)
-                        {
-                            _actionQueueEmptiedTime = DateTime.Now;
-                        }
-                    }
-
-                    // Reset emptied time if queue has items
-                    if (!actionQueue.IsEmpty)
-                    {
-                        _actionQueueEmptiedTime = DateTime.MinValue;
-                    }
-
-                    // Move mouse to interpolated position if replaying
-                    var cursorPos = CalculateCurrentCursorPosition(frameStartTime);
-                    if (cursorPos.HasValue)
-                    {
-                        if (WindowManager.Instance.ConvertToScreenCoordinates(cursorPos.Value.X, cursorPos.Value.Y, out int screenX, out int screenY))
-                        {
-                            InputManager.Move(screenX, screenY);
-                        }
-                    }
+                    _actionPlayer.StepAction(frameStartTime);
 
                     // Process terminal commands (skip if ROI is waiting for input)
                     if (!_roiRecorder.IsWaitingForInput && commandQueue.TryDequeue(out var command))
@@ -209,7 +132,7 @@ namespace Garden
                     }
 
                     // Draw and render at the end
-                    DrawAction(frame, frameStartTime);
+                    DrawAction(frame);
                     DrawCreatingRoi(frame, _roiRecorder);
                     DrawDetectedRois(frame, _stateDetector, _roiRecorder);
                     DrawState(frame, currentState);
@@ -231,26 +154,9 @@ namespace Garden
             return;
         }
 
-        private OpenCvSharp.Point? CalculateCurrentCursorPosition(DateTime currentTime)
+        private void DrawAction(Mat frame)
         {
-            if (!_isInterpolating)
-                return null;
-
-            // Calculate interpolation progress (0.0 to 1.0)
-            double totalDuration = (_upTime - _downTime).TotalMilliseconds;
-            double elapsed = (currentTime - _downTime).TotalMilliseconds;
-            double progress = Math.Clamp(elapsed / totalDuration, 0.0, 1.0);
-
-            // Interpolate position
-            int currentX = (int)(_downX + (_upX - _downX) * progress);
-            int currentY = (int)(_downY + (_upY - _downY) * progress);
-
-            return new OpenCvSharp.Point(currentX, currentY);
-        }
-
-        private void DrawAction(Mat frame, DateTime currentTime)
-        {
-            var cursorPos = CalculateCurrentCursorPosition(currentTime);
+            var cursorPos = _actionPlayer.CurrentCursorPosition;
             if (cursorPos.HasValue)
             {
                 // Draw circle at interpolated position
