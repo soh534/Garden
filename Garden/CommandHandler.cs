@@ -163,10 +163,6 @@ namespace Garden
             if (parts.Length == 3)
             {
                 string filename = parts[2].Trim();
-                if (!filename.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
-                {
-                    filename += ".json";
-                }
                 _mouseRecorder.SaveRecording(filename);
             }
             else
@@ -181,10 +177,6 @@ namespace Garden
             if (parts.Length == 3)
             {
                 string filename = parts[2].Trim();
-                if (!filename.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
-                {
-                    filename += ".json";
-                }
                 _actionPlayer.QueueReplay(filename);
             }
             else

@@ -97,7 +97,8 @@ namespace Garden
                 foreach (var roi in state.Value)
                 {
                     string key = $"{state.Key}/{roi.name}";
-                    string roiPath = Path.Combine(_roiDirectory, state.Key, roi.name);
+                    string roiFileName = $"{roi.name}.png";
+                    string roiPath = Path.Combine(_roiDirectory, state.Key, roiFileName);
 
                     if (File.Exists(roiPath))
                     {
@@ -141,7 +142,8 @@ namespace Garden
                 string stateName = Path.GetFileName(stateDir);
                 foreach (var imageFile in Directory.GetFiles(stateDir, "*.png"))
                 {
-                    string imageName = Path.GetFileName(imageFile);
+                    string imageFileName = Path.GetFileName(imageFile);
+                    string imageName = Path.GetFileNameWithoutExtension(imageFileName);
                     string key = $"{stateName}/{imageName}";
 
                     if (!knownRois.Contains(key))

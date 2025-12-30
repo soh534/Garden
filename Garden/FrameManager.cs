@@ -113,7 +113,7 @@ namespace Garden
                     if (!_roiRecorder.IsRecording && actionQueue.IsEmpty)
                     {
                         currentState = _stateDetector.DetectState(frame);
-                        if (string.IsNullOrEmpty(currentState) && _isBotEnabled)
+                        if (!string.IsNullOrEmpty(currentState) && _isBotEnabled)
                         {
                             _bot.HandleState(currentState);
                         }

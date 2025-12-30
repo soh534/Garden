@@ -25,7 +25,6 @@ namespace Garden
         private readonly ConcurrentQueue<MouseEvent> _actionQueue;
 
         // real time information of executing action
-        private bool _isInterpolating = false;
         private int _downX, _downY;
         private int _upX, _upY;
         private DateTime _downTime;
@@ -45,7 +44,8 @@ namespace Garden
 
         private List<MouseEvent>? LoadAction(string actionName)
         {
-            string filePath = Path.Combine(_actionDirectory, actionName);
+            string actionFileName = $"{actionName}.json";
+            string filePath = Path.Combine(_actionDirectory, actionFileName);
 
             if (!File.Exists(filePath))
             {
@@ -113,9 +113,6 @@ namespace Garden
 
         private OpenCvSharp.Point? CalculateCurrentCursorPosition(DateTime currentTime)
         {
-            if (!_isInterpolating)
-                return null;
-
             // Calculate interpolation progress (0.0 to 1.0)
             double totalDuration = (_upTime - _downTime).TotalMilliseconds;
             double elapsed = (currentTime - _downTime).TotalMilliseconds;
@@ -130,53 +127,44 @@ namespace Garden
 
         public void StepAction(DateTime time)
         {
-            // Process actions - check timing before dequeuing
-            if (_actionQueue.TryPeek(out var nextAction))
+            // Queue is empty - clear visualization and reset timing
+            if (!_actionQueue.TryPeek(out var nextAction))
             {
-                // Check if enough time has elapsed based on timestamps
-                var timeSinceLastAction = DateTime.Now - _lastActionTime;
-                var requiredDelay = nextAction.Timestamp - _lastActionTimestamp;
-                if (timeSinceLastAction >= requiredDelay)
+                _currentCursorPosition = null;
+                _lastActionTime = DateTime.MinValue;
+                _lastActionTimestamp = DateTime.MinValue;
+                return;
+            }
+
+            // 1. Pop and record down/up information
+            MouseEvent? actionToExecute = null;
+            var timeSinceLastAction = time - _lastActionTime;
+            var requiredDelay = nextAction.Timestamp - _lastActionTimestamp;
+
+            if (timeSinceLastAction >= requiredDelay)
+            {
+                _actionQueue.TryDequeue(out var action);
+                Debug.Assert(action != null);
+                _lastActionTime = time;
+                _lastActionTimestamp = action.Timestamp;
+                actionToExecute = action;
+
+                if (action.IsMouseDown)
                 {
-                    _actionQueue.TryDequeue(out var action);
-                    Debug.Assert(action != null);
-                    _lastActionTime = DateTime.Now;
-                    _lastActionTimestamp = action.Timestamp;
-
-                    if (action.IsMouseDown)
+                    // Record down and up information for interpolation
+                    if (_actionQueue.TryPeek(out var upAction))
                     {
-                        // Mouse down - peek at next action to get up position
-                        if (_actionQueue.TryPeek(out var upAction))
-                        {
-                            _downX = action.X;
-                            _downY = action.Y;
-                            _downTime = DateTime.Now;
-                            _upX = upAction.X;
-                            _upY = upAction.Y;
-                            _upTime = DateTime.Now + (upAction.Timestamp - action.Timestamp);
-                            _isInterpolating = true;
-                        }
-                    }
-                    else
-                    {
-                        // Mouse up - stop interpolating
-                        _isInterpolating = false;
-                    }
-
-                    // Convert window-relative coordinates back to screen coordinates
-                    if (WindowManager.Instance.ConvertToScreenCoordinates(action.X, action.Y, out int screenX, out int screenY))
-                    {
-                        // Move to position first
-                        InputManager.Move(screenX, screenY);
-                        Thread.Sleep(10); // Small delay for movement
-
-                        // Perform mouse action based on IsMouseDown
-                        InputManager.MouseEvent(action.IsMouseDown);
+                        _downX = action.X;
+                        _downY = action.Y;
+                        _downTime = time;
+                        _upX = upAction.X;
+                        _upY = upAction.Y;
+                        _upTime = time + (upAction.Timestamp - action.Timestamp);
                     }
                 }
             }
 
-            // Move mouse to interpolated position if replaying
+            // 2. Interpolate movement
             _currentCursorPosition = CalculateCurrentCursorPosition(time);
             if (_currentCursorPosition.HasValue)
             {
@@ -184,6 +172,13 @@ namespace Garden
                 {
                     InputManager.Move(screenX, screenY);
                 }
+            }
+
+            // 3. Click if it's time
+            if (actionToExecute != null)
+            {
+                Thread.Sleep(10); // Small delay for movement
+                InputManager.MouseEvent(actionToExecute.IsMouseDown);
             }
         }
     }

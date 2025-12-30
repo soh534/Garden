@@ -21,23 +21,12 @@ namespace Garden.Bots
         protected void QueueAction(string actionName)
         {
             if (ActionQueue == null || ActionPlayer == null) return;
-
-            if (!actionName.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
-            {
-                actionName += ".json";
-            }
-
             ActionPlayer.QueueReplay(actionName);
         }
 
         protected void QueueAction(string roiName, string actionName)
         {
             if (ActionQueue == null || ActionPlayer == null) return;
-
-            if (!actionName.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
-            {
-                actionName += ".json";
-            }
 
             var roiInfo = StateDetector.RoiDetectionInfos.FirstOrDefault(r => r.RoiName == roiName);
             if (roiInfo.RoiName == null)

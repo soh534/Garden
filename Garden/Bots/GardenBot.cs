@@ -9,28 +9,12 @@ namespace Garden.Bots
 
             switch (stateName)
             {
-                case "lockscreen":
+                case "1lockscreen":
                     QueueAction("lock", "dragup");
                     break;
-                case "firstscreen":
-                    QueueAction("scrollright");
+                case "2firstscreen":
+                    QueueAction("dragleft");
                     break;
-                case "secondscreen":
-                    QueueAction("mirrativicon", "click");
-                    break;
-                case "needtopressokbutton":
-                    QueueAction("okbutton", "click");
-                    break;
-                case "startmirrativ":
-                    QueueAction("livegamebutton", "click");
-                    break;
-                case "livegamepage":
-                    break;
-                case "gardenmain":
-                    break;
-                case "unknown":
-                    break;
-
             }
         }
     }

@@ -191,8 +191,7 @@ namespace Garden
             }
 
             // Check if ROI with same name already exists
-            string roiFileName = $"{roiName}.png";
-            var existingRoi = savedRoiData[stateName].FirstOrDefault(r => r.name == roiFileName);
+            var existingRoi = savedRoiData[stateName].FirstOrDefault(r => r.name == roiName);
 
             if (existingRoi != null)
             {
@@ -201,14 +200,14 @@ namespace Garden
                 existingRoi.y = y;
                 existingRoi.width = width;
                 existingRoi.height = height;
-                Console.WriteLine($"Overwriting existing ROI: {roiFileName}");
+                Console.WriteLine($"Overwriting existing ROI: {roiName}");
             }
             else
             {
                 // Add new ROI metadata
                 savedRoiData[stateName].Add(new RoiData
                 {
-                    name = roiFileName,
+                    name = roiName,
                     x = x,
                     y = y,
                     width = width,
