@@ -37,6 +37,7 @@ namespace Garden.Bots
 
             ActionPlayer.QueueReplayWithOffset(actionName, roiInfo.Center.X, roiInfo.Center.Y);
         }
-        public abstract void HandleState(string stateName);
+
+        public abstract void QueueStateResponse();
     }
 }

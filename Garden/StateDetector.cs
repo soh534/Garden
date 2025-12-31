@@ -24,6 +24,7 @@ namespace Garden
         private readonly object _roiMatsLock = new object();
 
         public RoiDetectionInfo[] RoiDetectionInfos { get; private set; } = Array.Empty<RoiDetectionInfo>();
+        public string CurrentState { get; private set; } = string.Empty;
 
         public Mat? GetRoiMat(string stateName, string roiName)
         {
@@ -210,10 +211,12 @@ namespace Garden
             }
         }
 
-        public string DetectState(Mat frame)
+        public void DetectState(Mat frame)
         {
             lock (_roiMatsLock)
             {
+                CurrentState = string.Empty;
+
                 // Allocate array if size changed
                 if (RoiDetectionInfos.Length != _roiMats.Count)
                 {
@@ -234,7 +237,7 @@ namespace Garden
 
                     // Perform template matching (SqDiff: exact color matching, 0 = perfect match)
                     Mat result = new Mat();
-                    Cv2.MatchTemplate(frame, roiMat, result, TemplateMatchModes.SqDiff);
+                    Cv2.MatchTemplate(frame, roiMat, result, TemplateMatchModes.SqDiffNormed);
 
                     // Get best match (minVal for SqDiff - lower is better)
                     Cv2.MinMaxLoc(result, out double minVal, out _, out Point minLoc, out _);
@@ -281,7 +284,10 @@ namespace Garden
                     }
                 }
 
-                return bestStateName;
+                if (bestAvgMinVal < 0.01)
+                {
+                    CurrentState = bestStateName;
+                }
             }
         }
 

@@ -109,14 +109,14 @@ namespace Garden
                     _windowPosManager.Position(Win32Api.FindWindow(null, "Captured Frame"));
                     _roiRecorder.SetCurrentFrame(frame);
 
-                    string currentState = string.Empty;
-                    if (!_roiRecorder.IsRecording && actionQueue.IsEmpty)
+                    if (!_roiRecorder.IsRecording)
                     {
-                        currentState = _stateDetector.DetectState(frame);
-                        if (!string.IsNullOrEmpty(currentState) && _isBotEnabled)
-                        {
-                            _bot.HandleState(currentState);
-                        }
+                        _stateDetector.DetectState(frame);
+                    }
+
+                    if (_isBotEnabled && actionQueue.IsEmpty)
+                    {
+                        _bot.QueueStateResponse();
                     }
 
                     _actionPlayer.StepAction(frameStartTime);
@@ -135,7 +135,7 @@ namespace Garden
                     DrawAction(frame);
                     DrawCreatingRoi(frame, _roiRecorder);
                     DrawDetectedRois(frame, _stateDetector, _roiRecorder);
-                    DrawState(frame, currentState);
+                    DrawState(frame);
                     Cv2.ImShow("Captured Frame", frame);
 
                     int key = Cv2.WaitKey(1);
@@ -208,9 +208,11 @@ namespace Garden
             }
         }
 
-        private void DrawState(Mat frame, string? stateName)
+        private void DrawState(Mat frame)
         {
-            if (stateName == null)
+            string currentState = _stateDetector.CurrentState;
+
+            if (string.IsNullOrEmpty(currentState))
             {
                 Cv2.PutText(frame, "State: unknown", new OpenCvSharp.Point(10, 20),
                     HersheyFonts.HersheySimplex, 0.5, Scalar.Yellow, 1);
@@ -218,10 +220,10 @@ namespace Garden
             else
             {
                 // Calculate confidence from RoiDetectionInfos for this state
-                var stateRois = _stateDetector.RoiDetectionInfos.Where(r => r.StateName == stateName).ToList();
+                var stateRois = _stateDetector.RoiDetectionInfos.Where(r => r.StateName == currentState).ToList();
                 double confidence = stateRois.Count > 0 ? stateRois.Average(r => r.MinVal) : 0.0;
 
-                Cv2.PutText(frame, $"State: {stateName} ({confidence:F3})", new OpenCvSharp.Point(10, 20),
+                Cv2.PutText(frame, $"State: {currentState} ({confidence:F3})", new OpenCvSharp.Point(10, 20),
                     HersheyFonts.HersheySimplex, 0.5, Scalar.Yellow, 1);
             }
         }
