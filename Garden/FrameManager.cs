@@ -205,6 +205,8 @@ namespace Garden
                 Cv2.PutText(frame, minValText,
                     new OpenCvSharp.Point(box.X, box.Y - 5),
                     HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 1);
+
+                break; // Only draw first ROI (best match, sorted by minVal)
             }
         }
 

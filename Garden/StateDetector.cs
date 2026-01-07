@@ -1,6 +1,8 @@
-using OpenCvSharp;
-using System.Text.Json;
 using NLog;
+using OpenCvSharp;
+using System.Diagnostics;
+using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
 using static Garden.RoiRecorder;
 using SavedRoiData = System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<Garden.RoiRecorder.RoiData>>;
 
@@ -18,13 +20,18 @@ namespace Garden
 
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private readonly string _roiDirectory;
+
+        // Key = state, value = List of RoiData
         private SavedRoiData _savedRoiData;
+
+        // Key = $"{state.Key}/{roi.name}"
         private Dictionary<string, Mat> _roiMats = new();
         private FileSystemWatcher _fileWatcher;
         private readonly object _roiMatsLock = new object();
 
         public RoiDetectionInfo[] RoiDetectionInfos { get; private set; } = Array.Empty<RoiDetectionInfo>();
         public string CurrentState { get; private set; } = string.Empty;
+        public string NextExpectedState { get; set; } = string.Empty;
 
         public Mat? GetRoiMat(string stateName, string roiName)
         {
@@ -223,9 +230,47 @@ namespace Garden
                     RoiDetectionInfos = new RoiDetectionInfo[_roiMats.Count];
                 }
 
-                // Detect all ROIs
+                // Do an early check
                 int index = 0;
-                foreach (var kvp in _roiMats)
+                if (!string.IsNullOrEmpty(NextExpectedState))
+                {
+                    List<RoiData> nextExpectedStateRois = _savedRoiData[NextExpectedState];
+                    index = 0;
+                    foreach (RoiData roiData in nextExpectedStateRois)
+                    {
+                        Mat? roiMat = GetRoiMat(NextExpectedState, roiData.name);
+                        Debug.Assert(roiMat != null);
+                        DetectRoi(frame, roiMat, out double minVal, out int centerX, out int centerY);
+
+                        RoiDetectionInfos[index++] = new RoiDetectionInfo
+                        {
+                            StateName = NextExpectedState,
+                            RoiName = roiData.name,
+                            Center = new Point(centerX, centerY),
+                            MinVal = minVal
+                        };
+                    }
+
+                    // Find all detected ROIs for this state
+                    var nextExpectedStateDetectedRois = RoiDetectionInfos[0..index].ToList();
+
+                    if (nextExpectedStateDetectedRois.Count == nextExpectedStateRois.Count)
+                    {
+                        // All ROIs found for this state
+                        double avgMinVal = nextExpectedStateDetectedRois.Average(r => r.MinVal);
+
+                        // Check if this state is better (most ROIs, then lowest minVal)
+                        if (avgMinVal < 0.001)
+                        {
+                            CurrentState = NextExpectedState;
+                            return;
+                        }
+                    }
+                }
+
+                // Detect all ROIs
+                index = 0;
+                foreach (KeyValuePair<string, Mat> kvp in _roiMats)
                 {
                     string roiKey = kvp.Key;
                     Mat roiMat = kvp.Value;
@@ -235,17 +280,7 @@ namespace Garden
                     string stateName = parts[0];
                     string roiName = parts[1];
 
-                    // Perform template matching (SqDiff: exact color matching, 0 = perfect match)
-                    Mat result = new Mat();
-                    Cv2.MatchTemplate(frame, roiMat, result, TemplateMatchModes.SqDiffNormed);
-
-                    // Get best match (minVal for SqDiff - lower is better)
-                    Cv2.MinMaxLoc(result, out double minVal, out _, out Point minLoc, out _);
-
-                    result.Dispose();
-
-                    int centerX = minLoc.X + roiMat.Width / 2;
-                    int centerY = minLoc.Y + roiMat.Height / 2;
+                    DetectRoi(frame, roiMat, out double minVal, out int centerX, out int centerY);
 
                     RoiDetectionInfos[index++] = new RoiDetectionInfo
                     {
@@ -284,11 +319,29 @@ namespace Garden
                     }
                 }
 
-                if (bestAvgMinVal < 0.01)
+                if (bestAvgMinVal < 0.001)
                 {
                     CurrentState = bestStateName;
                 }
+
+                // Sort by minVal so best match is first
+                Array.Sort(RoiDetectionInfos, (a, b) => a.MinVal.CompareTo(b.MinVal));
             }
+        }
+
+        private void DetectRoi(Mat frame, Mat roiMat, out double minVal, out int centerX, out int centerY)
+        {
+            // Perform template matching (SqDiff: exact color matching, 0 = perfect match)
+            Mat result = new Mat();
+            Cv2.MatchTemplate(frame, roiMat, result, TemplateMatchModes.SqDiffNormed);
+
+            // Get best match (minVal for SqDiff - lower is better)
+            Cv2.MinMaxLoc(result, out minVal, out _, out Point minLoc, out _);
+
+            result.Dispose();
+
+            centerX = minLoc.X + roiMat.Width / 2;
+            centerY = minLoc.Y + roiMat.Height / 2;
         }
 
         public void Reload()

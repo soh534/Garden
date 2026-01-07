@@ -50,7 +50,7 @@ namespace Garden
             }
         }
 
-        public void SaveRecording(string filename)
+        public void SaveRecording(string actionName)
         {
             // Auto-end recording if still active
             if (_isRecording)
@@ -65,7 +65,7 @@ namespace Garden
             }
 
             Directory.CreateDirectory(_saveDirectory);
-            string filePath = Path.Combine(_saveDirectory, filename);
+            string filePath = Path.Combine(_saveDirectory, $"{actionName}.json");
 
             var options = new JsonSerializerOptions
             {

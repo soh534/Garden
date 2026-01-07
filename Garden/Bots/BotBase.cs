@@ -24,7 +24,7 @@ namespace Garden.Bots
             ActionPlayer.QueueReplay(actionName);
         }
 
-        protected void QueueAction(string roiName, string actionName)
+        protected void QueueAction(string actionName, string roiName)
         {
             if (ActionQueue == null || ActionPlayer == null) return;
 

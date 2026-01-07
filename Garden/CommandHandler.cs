@@ -32,105 +32,99 @@ namespace Garden
 
         public bool Handle(string command, Mat frame)
         {
-            if (command.Equals("quit", StringComparison.OrdinalIgnoreCase))
+            var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0) return true;
+
+            string subject = parts[0].ToLowerInvariant();
+            string verb = parts.Length > 1 ? parts[1].ToLowerInvariant() : "";
+
+            switch (subject)
             {
-                Logger.Info("Quit command received.");
-                return false; // Signal to stop processing
+                case "quit":
+                    Logger.Info("Quit command received.");
+                    return false;
+
+                case "help":
+                    ShowHelp();
+                    return true;
+
+                case "image":
+                    if (verb == "save")
+                    {
+                        HandleSaveCommand(command, frame);
+                    }
+                    return true;
+
+                case "action":
+                    switch (verb)
+                    {
+                        case "record":
+                            _mouseRecorder.StartRecording();
+                            break;
+                        case "reset":
+                            _mouseRecorder.ResetRecording();
+                            break;
+                        case "save":
+                            HandleMouseRecordSaveCommand(command);
+                            break;
+                        case "replay":
+                            HandleRunActionCommand(command);
+                            break;
+                    }
+                    return true;
+
+                case "roi":
+                    switch (verb)
+                    {
+                        case "record":
+                            HandleRecordRoiCommand(command);
+                            break;
+                        case "stop":
+                            _roiRecorder.StopRecording();
+                            break;
+                        case "remove":
+                            HandleRemoveRoiCommand(command);
+                            break;
+                        case "list":
+                            _roiRecorder.ListStates();
+                            break;
+                    }
+                    return true;
+
+                case "bot":
+                    switch (verb)
+                    {
+                        case "start":
+                            _frameManager.EnableBot();
+                            Console.WriteLine("Bot started.");
+                            break;
+                        case "stop":
+                            _frameManager.DisableBot();
+                            Console.WriteLine("Bot stopped.");
+                            break;
+                    }
+                    return true;
+
+                default:
+                    Logger.Info($"Unknown command: {command}");
+                    return true;
             }
-
-            if (command.StartsWith("save image ", StringComparison.OrdinalIgnoreCase))
-            {
-                HandleSaveCommand(command, frame);
-                return true; // Continue processing
-            }
-
-            if (command.Equals("record action", StringComparison.OrdinalIgnoreCase))
-            {
-                _mouseRecorder.StartRecording();
-                return true; // Continue processing
-            }
-
-            if (command.Equals("reset action", StringComparison.OrdinalIgnoreCase))
-            {
-                _mouseRecorder.ResetRecording();
-                return true; // Continue processing
-            }
-
-
-            if (command.StartsWith("save action ", StringComparison.OrdinalIgnoreCase))
-            {
-                HandleMouseRecordSaveCommand(command);
-                return true; // Continue processing
-            }
-
-            if (command.StartsWith("replay action ", StringComparison.OrdinalIgnoreCase))
-            {
-                HandleRunActionCommand(command);
-                return true; // Continue processing
-            }
-
-            if (command.StartsWith("record roi ", StringComparison.OrdinalIgnoreCase))
-            {
-                HandleRecordRoiCommand(command);
-                return true; // Continue processing
-            }
-
-            if (command.Equals("stop roi", StringComparison.OrdinalIgnoreCase))
-            {
-                _roiRecorder.StopRecording();
-                return true; // Continue processing
-            }
-
-            if (command.StartsWith("remove roi ", StringComparison.OrdinalIgnoreCase))
-            {
-                HandleRemoveRoiCommand(command);
-                return true; // Continue processing
-            }
-
-            if (command.Equals("list roi", StringComparison.OrdinalIgnoreCase))
-            {
-                _roiRecorder.ListStates();
-                return true; // Continue processing
-            }
-
-            if (command.Equals("start bot", StringComparison.OrdinalIgnoreCase))
-            {
-                _frameManager.EnableBot();
-                Console.WriteLine("Bot started.");
-                return true; // Continue processing
-            }
-
-            if (command.Equals("stop bot", StringComparison.OrdinalIgnoreCase))
-            {
-                _frameManager.DisableBot();
-                Console.WriteLine("Bot stopped.");
-                return true; // Continue processing
-            }
-
-            if (command.Equals("help", StringComparison.OrdinalIgnoreCase))
-            {
-                ShowHelp();
-                return true; // Continue processing
-            }
-
-            Logger.Info($"Unknown command: {command}");
-            return true; // Continue processing
         }
 
         public static void ShowHelp()
         {
             Console.WriteLine("\nAvailable commands:");
-            Console.WriteLine("  save image <filename.png>   - Save screenshot");
-            Console.WriteLine("  record action               - Start recording mouse clicks");
-            Console.WriteLine("  reset action                - Clear recorded events (stay recording)");
-            Console.WriteLine("  save action <filename>      - Save recorded clicks & end recording");
-            Console.WriteLine("  replay action <filename>    - Replay recorded clicks");
-            Console.WriteLine("  record roi <state_name>     - Start recording ROIs for a state");
-            Console.WriteLine("  stop roi                    - Stop ROI recording");
-            Console.WriteLine("  list roi                    - List all ROI states");
-            Console.WriteLine("  remove roi <state_name>     - Remove ROI state and its files");
-            Console.WriteLine("  start bot                   - Start the bot automation");
-            Console.WriteLine("  stop bot                    - Stop the bot automation");
+            Console.WriteLine("  image save <filename.png>   - Save screenshot");
+            Console.WriteLine("  action record               - Start recording mouse clicks");
+            Console.WriteLine("  action reset                - Clear recorded events (stay recording)");
+            Console.WriteLine("  action save <name>          - Save recorded clicks & end recording");
+            Console.WriteLine("  action replay <filename>    - Replay recorded clicks");
+            Console.WriteLine("  roi record <state_name>     - Start recording ROIs for a state");
+            Console.WriteLine("  roi stop                    - Stop ROI recording");
+            Console.WriteLine("  roi list                    - List all ROI states");
+            Console.WriteLine("  roi remove <state_name>     - Remove ROI state and its files");
+            Console.WriteLine("  bot start                   - Start the bot automation");
+            Console.WriteLine("  bot stop                    - Stop the bot automation");
             Console.WriteLine("  help                        - Show this help message");
             Console.WriteLine("  quit                        - Exit application");
             Console.WriteLine();
@@ -153,7 +147,7 @@ namespace Garden
             }
             else
             {
-                Logger.Info("Usage: save image filename.png");
+                Logger.Info("Usage: image save filename.png");
             }
         }
 
@@ -162,12 +156,12 @@ namespace Garden
             var parts = command.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length == 3)
             {
-                string filename = parts[2].Trim();
-                _mouseRecorder.SaveRecording(filename);
+                string actionName = parts[2].Trim();
+                _mouseRecorder.SaveRecording(actionName);
             }
             else
             {
-                Logger.Info("Usage: save action filename.json");
+                Logger.Info("Usage: action save <name>");
             }
         }
 
@@ -181,7 +175,7 @@ namespace Garden
             }
             else
             {
-                Logger.Info("Usage: replay action filename");
+                Logger.Info("Usage: action replay filename");
             }
         }
 
@@ -195,7 +189,7 @@ namespace Garden
             }
             else
             {
-                Logger.Info("Usage: record roi <state_name>");
+                Logger.Info("Usage: roi record <state_name>");
             }
         }
 
@@ -209,7 +203,7 @@ namespace Garden
             }
             else
             {
-                Logger.Info("Usage: remove roi <state_name>");
+                Logger.Info("Usage: roi remove <state_name>");
             }
         }
     }

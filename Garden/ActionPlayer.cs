@@ -180,6 +180,15 @@ namespace Garden
                 Thread.Sleep(10); // Small delay for movement
                 InputManager.MouseEvent(actionToExecute.IsMouseDown);
             }
+
+            // Clear queue after having emptied
+            if (_actionQueue.IsEmpty)
+            {
+                _currentCursorPosition = null;
+                _lastActionTime = DateTime.MinValue;
+                _lastActionTimestamp = DateTime.MinValue;
+                return;
+            }
         }
     }
 }
