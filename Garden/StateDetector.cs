@@ -20,6 +20,7 @@ namespace Garden
 
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private readonly string _roiDirectory;
+        private readonly Fsm _fsm;
 
         // Key = state, value = List of RoiData
         private SavedRoiData _savedRoiData;
@@ -31,7 +32,7 @@ namespace Garden
 
         public RoiDetectionInfo[] RoiDetectionInfos { get; private set; } = Array.Empty<RoiDetectionInfo>();
         public string CurrentState { get; private set; } = string.Empty;
-        public string NextExpectedState { get; set; } = string.Empty;
+        public List<string> NextExpectedStates { get; set; } = new();
 
         public Mat? GetRoiMat(string stateName, string roiName)
         {
@@ -39,8 +40,9 @@ namespace Garden
             return _roiMats.ContainsKey(roiKey) ? _roiMats[roiKey] : null;
         }
 
-        public StateDetector(string roiDirectory)
+        public StateDetector(Fsm fsm, string roiDirectory)
         {
+            _fsm = fsm;
             _roiDirectory = roiDirectory;
             LoadRoiData();
             LoadRoiMats();
@@ -232,19 +234,19 @@ namespace Garden
 
                 // Do an early check
                 int index = 0;
-                if (!string.IsNullOrEmpty(NextExpectedState))
+                foreach (string expectedState in NextExpectedStates)
                 {
-                    List<RoiData> nextExpectedStateRois = _savedRoiData[NextExpectedState];
+                    List<RoiData> nextExpectedStateRois = _savedRoiData[expectedState];
                     index = 0;
                     foreach (RoiData roiData in nextExpectedStateRois)
                     {
-                        Mat? roiMat = GetRoiMat(NextExpectedState, roiData.name);
+                        Mat? roiMat = GetRoiMat(expectedState, roiData.name);
                         Debug.Assert(roiMat != null);
                         DetectRoi(frame, roiMat, out double minVal, out int centerX, out int centerY);
 
                         RoiDetectionInfos[index++] = new RoiDetectionInfo
                         {
-                            StateName = NextExpectedState,
+                            StateName = expectedState,
                             RoiName = roiData.name,
                             Center = new Point(centerX, centerY),
                             MinVal = minVal
@@ -262,8 +264,8 @@ namespace Garden
                         // Check if this state is better (most ROIs, then lowest minVal)
                         if (avgMinVal < 0.001)
                         {
-                            CurrentState = NextExpectedState;
-                            return;
+                            CurrentState = expectedState;
+                            NextExpectedStates = _fsm.Transitions[CurrentState].Values.ToList();
                         }
                     }
                 }
@@ -322,6 +324,7 @@ namespace Garden
                 if (bestAvgMinVal < 0.001)
                 {
                     CurrentState = bestStateName;
+                    NextExpectedStates = _fsm.Transitions[CurrentState].Values.ToList();
                 }
 
                 // Sort by minVal so best match is first

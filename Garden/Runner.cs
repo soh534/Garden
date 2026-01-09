@@ -65,7 +65,8 @@ namespace Garden
             MouseEventRecorder mouseRecorder = new(configManager.ActionSavePath);
             ActionPlayer actionPlayer = new(configManager.ActionSavePath, actionQueue);
             RoiRecorder roiRecorder = new(configManager.RoiSavePath, commandQueue);
-            StateDetector stateDetector = new(configManager.RoiSavePath);
+            Fsm fsm = new(configManager.FsmPath);
+            StateDetector stateDetector = new(fsm, configManager.RoiSavePath);
 
             // Initialize bot with action queue, detector, and action player
             // Bot for Garden game

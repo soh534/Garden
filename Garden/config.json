@@ -2,6 +2,7 @@
     "imageSavePath":"E:\\Code\\Garden\\images",
     "actionSavePath":"E:\\Code\\Garden\\actions",
     "roiSavePath":"E:\\Code\\Garden\\rois",
+    "fsmPath":"E:\\Code\\Garden\\fsm.json",
     "scale": 1.0,
     "windowPositions": {
         "topLeft": { "x": 50, "y": 50 },

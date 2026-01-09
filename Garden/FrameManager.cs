@@ -206,7 +206,7 @@ namespace Garden
                     new OpenCvSharp.Point(box.X, box.Y - 5),
                     HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 1);
 
-                break; // Only draw first ROI (best match, sorted by minVal)
+                break; // Temporarily just draw first ROI.
             }
         }
 
