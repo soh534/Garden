@@ -216,7 +216,7 @@ namespace Garden
             }
             catch (Exception ex)
             {
-                Logger.Error($"Error saving cleaned metadata: {ex.Message}");
+                  Logger.Error($"Error saving cleaned metadata: {ex.Message}");
             }
         }
 
@@ -232,46 +232,21 @@ namespace Garden
                     RoiDetectionInfos = new RoiDetectionInfo[_roiMats.Count];
                 }
 
-                // Do an early check
-                int index = 0;
                 foreach (string expectedState in NextExpectedStates)
                 {
-                    List<RoiData> nextExpectedStateRois = _savedRoiData[expectedState];
-                    index = 0;
-                    foreach (RoiData roiData in nextExpectedStateRois)
+                    if (DetectSingleState(frame, expectedState))
                     {
-                        Mat? roiMat = GetRoiMat(expectedState, roiData.name);
-                        Debug.Assert(roiMat != null);
-                        DetectRoi(frame, roiMat, out double minVal, out int centerX, out int centerY);
-
-                        RoiDetectionInfos[index++] = new RoiDetectionInfo
-                        {
-                            StateName = expectedState,
-                            RoiName = roiData.name,
-                            Center = new Point(centerX, centerY),
-                            MinVal = minVal
-                        };
-                    }
-
-                    // Find all detected ROIs for this state
-                    var nextExpectedStateDetectedRois = RoiDetectionInfos[0..index].ToList();
-
-                    if (nextExpectedStateDetectedRois.Count == nextExpectedStateRois.Count)
-                    {
-                        // All ROIs found for this state
-                        double avgMinVal = nextExpectedStateDetectedRois.Average(r => r.MinVal);
-
-                        // Check if this state is better (most ROIs, then lowest minVal)
-                        if (avgMinVal < 0.001)
-                        {
-                            CurrentState = expectedState;
-                            NextExpectedStates = _fsm.Transitions[CurrentState].Values.ToList();
-                        }
+                        return;
                     }
                 }
 
+                if (CurrentState != string.Empty && DetectSingleState(frame, CurrentState))
+                {
+                    return;
+                }
+
                 // Detect all ROIs
-                index = 0;
+                int index = 0;
                 foreach (KeyValuePair<string, Mat> kvp in _roiMats)
                 {
                     string roiKey = kvp.Key;
@@ -330,6 +305,45 @@ namespace Garden
                 // Sort by minVal so best match is first
                 Array.Sort(RoiDetectionInfos, (a, b) => a.MinVal.CompareTo(b.MinVal));
             }
+        }
+
+        private bool DetectSingleState(Mat frame, string state)
+        {
+            List<RoiData> nextExpectedStateRois = _savedRoiData[state];
+            int index = 0;
+            foreach (RoiData roiData in nextExpectedStateRois)
+            {
+                Mat? roiMat = GetRoiMat(state, roiData.name);
+                Debug.Assert(roiMat != null);
+                DetectRoi(frame, roiMat, out double minVal, out int centerX, out int centerY);
+
+                RoiDetectionInfos[index++] = new RoiDetectionInfo
+                {
+                    StateName = state,
+                    RoiName = roiData.name,
+                    Center = new Point(centerX, centerY),
+                    MinVal = minVal
+                };
+            }
+
+            // Find all detected ROIs for this state
+            var nextExpectedStateDetectedRois = RoiDetectionInfos[0..index].ToList();
+
+            if (nextExpectedStateDetectedRois.Count == nextExpectedStateRois.Count)
+            {
+                // All ROIs found for this state
+                double avgMinVal = nextExpectedStateDetectedRois.Average(r => r.MinVal);
+
+                // Check if this state is better (most ROIs, then lowest minVal)
+                if (avgMinVal < 0.001)
+                {
+                    CurrentState = state;
+                    NextExpectedStates = _fsm.Transitions[CurrentState].Values.ToList();
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void DetectRoi(Mat frame, Mat roiMat, out double minVal, out int centerX, out int centerY)

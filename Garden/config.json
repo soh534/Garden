@@ -3,12 +3,12 @@
     "actionSavePath":"E:\\Code\\Garden\\actions",
     "roiSavePath":"E:\\Code\\Garden\\rois",
     "fsmPath":"E:\\Code\\Garden\\fsm.json",
-    "scale": 1.0,
+    "scale": 1.75,
     "windowPositions": {
         "topLeft": { "x": 50, "y": 50 },
         "spacing": 50
     },
 	"thirdPartySdks": [
-    {"name":"scrcpy", "path":"E:\\Code\\Thirdparty\\scrcpy-win64-v3.2\\scrcpy-win64-v3.2\\scrcpy.exe"}
+    {"name":"scrcpy", "path":"E:\\Code\\Thirdparty\\scrcpy-win64-v3.3.4\\scrcpy-win64-v3.3.4\\scrcpy.exe"}
 	]
 }
