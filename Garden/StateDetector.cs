@@ -257,7 +257,13 @@ namespace Garden
                     string stateName = parts[0];
                     string roiName = parts[1];
 
-                    DetectRoi(frame, roiMat, out double minVal, out int centerX, out int centerY);
+                    RoiData roiData = _savedRoiData[stateName].First(r => r.name == roiName);
+                    if (roiData.frameWidth == 0)
+                    {
+                        throw new InvalidOperationException($"ROI '{stateName}/{roiName}' has no frame dimensions recorded. Re-record this ROI.");
+                    }
+                    double scale = (double)frame.Width / roiData.frameWidth;
+                    DetectRoi(frame, roiMat, scale, out double minVal, out int centerX, out int centerY);
 
                     RoiDetectionInfos[index++] = new RoiDetectionInfo
                     {
@@ -315,7 +321,12 @@ namespace Garden
             {
                 Mat? roiMat = GetRoiMat(state, roiData.name);
                 Debug.Assert(roiMat != null);
-                DetectRoi(frame, roiMat, out double minVal, out int centerX, out int centerY);
+                if (roiData.frameWidth == 0)
+                {
+                    throw new InvalidOperationException($"ROI '{state}/{roiData.name}' has no frame dimensions recorded. Re-record this ROI.");
+                }
+                double scale = (double)frame.Width / roiData.frameWidth;
+                DetectRoi(frame, roiMat, scale, out double minVal, out int centerX, out int centerY);
 
                 RoiDetectionInfos[index++] = new RoiDetectionInfo
                 {
@@ -346,19 +357,29 @@ namespace Garden
             return false;
         }
 
-        private void DetectRoi(Mat frame, Mat roiMat, out double minVal, out int centerX, out int centerY)
+        private void DetectRoi(Mat frame, Mat roiMat, double scale, out double minVal, out int centerX, out int centerY)
         {
-            // Perform template matching (SqDiff: exact color matching, 0 = perfect match)
+            int scaledW = (int)(roiMat.Width * scale);
+            int scaledH = (int)(roiMat.Height * scale);
+
+            bool needResize = Math.Abs(scale - 1.0) >= 0.001;
+            Mat scaledTemplate = needResize ? new Mat() : roiMat;
+            if (needResize)
+            {
+                Cv2.Resize(roiMat, scaledTemplate, new Size(scaledW, scaledH));
+            }
+
             Mat result = new Mat();
-            Cv2.MatchTemplate(frame, roiMat, result, TemplateMatchModes.SqDiffNormed);
-
-            // Get best match (minVal for SqDiff - lower is better)
+            Cv2.MatchTemplate(frame, scaledTemplate, result, TemplateMatchModes.SqDiffNormed);
             Cv2.MinMaxLoc(result, out minVal, out _, out Point minLoc, out _);
-
             result.Dispose();
+            if (needResize)
+            {
+                scaledTemplate.Dispose();
+            }
 
-            centerX = minLoc.X + roiMat.Width / 2;
-            centerY = minLoc.Y + roiMat.Height / 2;
+            centerX = minLoc.X + scaledW / 2;
+            centerY = minLoc.Y + scaledH / 2;
         }
 
         public void Reload()

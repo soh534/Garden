@@ -14,6 +14,8 @@ namespace Garden
             public int y { get; set; }
             public int width { get; set; }
             public int height { get; set; }
+            public int frameWidth { get; set; }
+            public int frameHeight { get; set; }
         }
 
         private readonly string _saveDirectory;
@@ -115,7 +117,9 @@ namespace Garden
                     Mat roiMat = new Mat(_currentFrame, roi);
 
                     // Process on background thread to avoid blocking hook
-                    _ = Task.Run(() => PromptAndSaveRoi(roiMat, _currentStateName, x, y, width, height));
+                    int frameWidth = _currentFrame.Width;
+                    int frameHeight = _currentFrame.Height;
+                    _ = Task.Run(() => PromptAndSaveRoi(roiMat, _currentStateName, x, y, width, height, frameWidth, frameHeight));
                 }
 
                 // Reset for next ROI (stay in recording mode)
@@ -123,7 +127,7 @@ namespace Garden
             }
         }
 
-        private void PromptAndSaveRoi(Mat roiMat, string stateName, int x, int y, int width, int height)
+        private void PromptAndSaveRoi(Mat roiMat, string stateName, int x, int y, int width, int height, int frameWidth, int frameHeight)
         {
             Console.Write("Enter ROI name: ");
 
@@ -158,7 +162,7 @@ namespace Garden
                 Console.WriteLine($"ROI saved to {filePath}");
 
                 // Save metadata
-                SaveRoiData(stateName, roiName, x, y, width, height);
+                SaveRoiData(stateName, roiName, x, y, width, height, frameWidth, frameHeight);
             }
             else
             {
@@ -168,7 +172,7 @@ namespace Garden
             roiMat.Dispose();
         }
 
-        private void SaveRoiData(string stateName, string roiName, int x, int y, int width, int height)
+        private void SaveRoiData(string stateName, string roiName, int x, int y, int width, int height, int frameWidth, int frameHeight)
         {
             string roiDataPath = Path.Combine(_saveDirectory, "roi_metadata.json");
 
@@ -200,6 +204,8 @@ namespace Garden
                 existingRoi.y = y;
                 existingRoi.width = width;
                 existingRoi.height = height;
+                existingRoi.frameWidth = frameWidth;
+                existingRoi.frameHeight = frameHeight;
                 Console.WriteLine($"Overwriting existing ROI: {roiName}");
             }
             else
@@ -211,7 +217,9 @@ namespace Garden
                     x = x,
                     y = y,
                     width = width,
-                    height = height
+                    height = height,
+                    frameWidth = frameWidth,
+                    frameHeight = frameHeight
                 });
             }
 

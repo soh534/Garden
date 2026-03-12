@@ -1,3 +1,6 @@
+# Claude worktrees
+.claude/worktrees/
+
 # Visual Studio standard ignores
 .vs/
 bin/
