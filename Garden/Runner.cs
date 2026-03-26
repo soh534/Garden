@@ -12,11 +12,19 @@ namespace Garden
     class Runner
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-        const string ConfigPath = "E:\\Code\\Garden\\Garden\\config.json";
 
         public void Run()
         {
-            ConfigManager configManager = new(ConfigPath);
+            string dataRoot = Environment.GetEnvironmentVariable("GARDEN_DATA")
+                ?? throw new InvalidOperationException("GARDEN_DATA environment variable is not set.");
+
+            string configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
+            ConfigManager configManager = new(configPath);
+
+            string imageSavePath  = Path.Combine(dataRoot, "images");
+            string actionSavePath = Path.Combine(dataRoot, "actions");
+            string roiSavePath    = Path.Combine(dataRoot, "rois");
+            string fsmPath        = Path.Combine(dataRoot, "fsm.json");
 
             Thirdparty? thirdparty = configManager.GetThirdPartySdk("scrcpy");
             if (thirdparty == null)
@@ -62,17 +70,17 @@ namespace Garden
                 }
             });
 
-            MouseEventRecorder mouseRecorder = new(configManager.ActionSavePath);
-            ActionPlayer actionPlayer = new(configManager.ActionSavePath, actionQueue);
-            RoiRecorder roiRecorder = new(configManager.RoiSavePath, commandQueue);
-            Fsm fsm = new(configManager.FsmPath);
-            StateDetector stateDetector = new(fsm, configManager.RoiSavePath);
+            MouseEventRecorder mouseRecorder = new(actionSavePath);
+            ActionPlayer actionPlayer = new(actionSavePath, actionQueue);
+            RoiRecorder roiRecorder = new(roiSavePath, commandQueue);
+            Fsm fsm = new(fsmPath);
+            StateDetector stateDetector = new(fsm, roiSavePath);
 
             // Initialize bot with action queue, detector, and action player
             // Bot for Garden game
             BotBase bot = new GardenBot();
             bot.Initialize(actionQueue, stateDetector, actionPlayer);
-            FrameManager ssManager = new(configManager.ImageSavePath, bot, mouseRecorder, actionPlayer, roiRecorder, stateDetector, windowPosManager);
+            FrameManager ssManager = new(imageSavePath, bot, mouseRecorder, actionPlayer, roiRecorder, stateDetector, windowPosManager);
 
 
             var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc, commandQueue, actionQueue), cts.Token);
