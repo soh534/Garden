@@ -284,6 +284,7 @@ namespace Garden
             catch (Exception ex)
             {
                 Console.WriteLine($"Error removing ROI state: {ex.Message}");
+                throw;
             }
         }
 
@@ -323,6 +324,7 @@ namespace Garden
             catch (Exception ex)
             {
                 Console.WriteLine($"Error listing ROI states: {ex.Message}");
+                throw;
             }
         }
     }

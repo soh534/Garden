@@ -70,7 +70,7 @@ namespace Garden
             catch (Exception ex)
             {
                 Logger.Error($"Error loading action file: {ex.Message}");
-                return null;
+                throw;
             }
         }
 

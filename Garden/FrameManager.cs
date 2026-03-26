@@ -47,18 +47,11 @@ namespace Garden
 
         public Mat CaptureWindow(IntPtr hWnd)
         {
-            // Get bmp of full window (including borders, screen-space).
-            // GetWindowRect returns logical pixels, but PrintWindow renders at physical pixel resolution.
-            // So we must create the bitmap at physical size to avoid capturing only a cropped portion.
             Win32Api.GetWindowRect(hWnd, out Win32Api.RECT windowRect);
-            int logicalWindowWidth = windowRect.Right - windowRect.Left;
-            int logicalWindowHeight = windowRect.Bottom - windowRect.Top;
+            int windowWidth = windowRect.Right - windowRect.Left;
+            int windowHeight = windowRect.Bottom - windowRect.Top;
 
-            double scale = WindowManager.Instance.GetScale();
-            int physicalWindowWidth = (int)(logicalWindowWidth * scale);
-            int physicalWindowHeight = (int)(logicalWindowHeight * scale);
-
-            using var bmp = new Bitmap(physicalWindowWidth, physicalWindowHeight, PixelFormat.Format32bppRgb);
+            using var bmp = new Bitmap(windowWidth, windowHeight, PixelFormat.Format32bppRgb);
             using (var g = Graphics.FromImage(bmp))
             {
                 IntPtr hdc = g.GetHdc();
@@ -72,34 +65,20 @@ namespace Garden
                 }
             }
 
-            // Get client rect in client-space (logical pixels)
+            // Get client rect and crop out window borders
             Win32Api.GetClientRect(hWnd, out Win32Api.RECT clientRect);
-
-            // Get client top left in screen coordinates (logical pixels)
             Win32Api.POINT clientTopLeft = new Win32Api.POINT { X = clientRect.Left, Y = clientRect.Top };
             Win32Api.ClientToScreen(hWnd, ref clientTopLeft);
 
-            // Border offset and client dimensions scaled up to physical pixels for cropping
-            int offsetX = (int)((clientTopLeft.X - windowRect.Left) * scale);
-            int offsetY = (int)((clientTopLeft.Y - windowRect.Top) * scale);
-            int physicalClientWidth = (int)(clientRect.Right * scale);
-            int physicalClientHeight = (int)(clientRect.Bottom * scale);
+            int offsetX = clientTopLeft.X - windowRect.Left;
+            int offsetY = clientTopLeft.Y - windowRect.Top;
 
-            // Crop client area from physical bitmap
-            using var croppedBmp = bmp.Clone(new Rectangle(offsetX, offsetY, physicalClientWidth, physicalClientHeight), bmp.PixelFormat);
+            using var croppedBmp = bmp.Clone(new Rectangle(offsetX, offsetY, clientRect.Right, clientRect.Bottom), bmp.PixelFormat);
             bmp.Dispose();
 
-            Mat physicalMat = OpenCvSharp.Extensions.BitmapConverter.ToMat(croppedBmp);
+            Mat mat = OpenCvSharp.Extensions.BitmapConverter.ToMat(croppedBmp);
             croppedBmp.Dispose();
-
-            if (Math.Abs(scale - 1.0) < 0.01)
-                return physicalMat;
-
-            // Resize back to logical pixels so ImShow window stays the same size as scrcpy
-            Mat logicalMat = new Mat();
-            Cv2.Resize(physicalMat, logicalMat, new OpenCvSharp.Size(clientRect.Right, clientRect.Bottom));
-            physicalMat.Dispose();
-            return logicalMat;
+            return mat;
         }
 
         internal void ProcessFrames(CancellationToken token, Process proc, ConcurrentQueue<string> commandQueue, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue)
@@ -159,6 +138,7 @@ namespace Garden
                 catch (Exception e)
                 {
                     Logger.Error($"Error capturing frame: {e.Message}");
+                    throw;
                 }
 
                 // Calculate frame time and sleep for remaining time

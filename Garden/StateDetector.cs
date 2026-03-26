@@ -90,6 +90,7 @@ namespace Garden
             catch (Exception ex)
             {
                 Logger.Error($"Error loading ROI metadata: {ex.Message}");
+                throw;
             }
         }
 
@@ -167,6 +168,7 @@ namespace Garden
                         catch (Exception ex)
                         {
                             Logger.Error($"Error deleting orphaned image {key}: {ex.Message}");
+                            throw;
                         }
                     }
                 }
@@ -182,6 +184,7 @@ namespace Garden
                     catch (Exception ex)
                     {
                         Logger.Error($"Error deleting directory {stateName}: {ex.Message}");
+                        throw;
                     }
                 }
             }
@@ -216,7 +219,8 @@ namespace Garden
             }
             catch (Exception ex)
             {
-                  Logger.Error($"Error saving cleaned metadata: {ex.Message}");
+                Logger.Error($"Error saving cleaned metadata: {ex.Message}");
+                throw;
             }
         }
 
@@ -224,6 +228,11 @@ namespace Garden
         {
             lock (_roiMatsLock)
             {
+                if (_savedRoiData == null)
+                {
+                    return;
+                }
+
                 CurrentState = string.Empty;
 
                 // Allocate array if size changed
@@ -305,7 +314,7 @@ namespace Garden
                 if (bestAvgMinVal < 0.001)
                 {
                     CurrentState = bestStateName;
-                    NextExpectedStates = _fsm.Transitions[CurrentState].Values.ToList();
+                    NextExpectedStates = GetNextExpectedStates(CurrentState);
                 }
 
                 // Sort by minVal so best match is first
@@ -349,12 +358,19 @@ namespace Garden
                 if (avgMinVal < 0.001)
                 {
                     CurrentState = state;
-                    NextExpectedStates = _fsm.Transitions[CurrentState].Values.ToList();
+                    NextExpectedStates = GetNextExpectedStates(CurrentState);
                     return true;
                 }
             }
 
             return false;
+        }
+
+        private List<string> GetNextExpectedStates(string state)
+        {
+            return _fsm.Transitions.TryGetValue(state, out var transitions)
+                ? transitions.Values.ToList()
+                : new List<string>();
         }
 
         private void DetectRoi(Mat frame, Mat roiMat, double scale, out double minVal, out int centerX, out int centerY)

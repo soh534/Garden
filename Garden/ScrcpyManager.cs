@@ -52,6 +52,7 @@ namespace Garden
             catch (Exception e)
             {
                 Logger.Error($"Failed somehow: {e.Message}");
+                throw;
             }
 
             return null;
