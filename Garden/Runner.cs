@@ -1,11 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Reflection.PortableExecutable;
 using System.Text.Json;
 using NLog;
 using Garden.Bots;
-
-using Thirdparty = Garden.ConfigManager.Config.Thirdparty;
 
 namespace Garden
 {
@@ -15,8 +12,17 @@ namespace Garden
 
         public void Run()
         {
-            string dataRoot = Environment.GetEnvironmentVariable("GARDEN_DATA")
-                ?? throw new InvalidOperationException("GARDEN_DATA environment variable is not set.");
+            string? dataRoot = Environment.GetEnvironmentVariable("GARDEN_DATA");
+            if (string.IsNullOrEmpty(dataRoot))
+            {
+                Logger.Error("GARDEN_DATA environment variable is not set. Run setup.ps1.");
+                return;
+            }
+            if (!Directory.Exists(dataRoot))
+            {
+                Logger.Error($"GARDEN_DATA directory does not exist: {dataRoot}");
+                return;
+            }
 
             string configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
             ConfigManager configManager = new(configPath);
@@ -26,17 +32,17 @@ namespace Garden
             string roiSavePath    = Path.Combine(dataRoot, "rois");
             string fsmPath        = Path.Combine(dataRoot, "fsm.json");
 
-            Thirdparty? thirdparty = configManager.GetThirdPartySdk("scrcpy");
-            if (thirdparty == null)
+            if (!ScrcpyManager.IsAvailable())
             {
-                Console.WriteLine("scrcpy SDK not found in config.");
+                Logger.Error("scrcpy not found on PATH. Run setup.ps1 to install it.");
                 return;
             }
+
             // Initialize window manager with the window title and scale
             WindowManager.Instance.SetWindowTitle("Garden");
             WindowManager.Instance.SetScale(configManager.Scale);
 
-            ScrcpyManager scrcpyManager = new(thirdparty.path);
+            ScrcpyManager scrcpyManager = new();
             Process? proc = scrcpyManager.Start();
             Debug.Assert(proc != null);
 

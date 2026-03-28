@@ -3,8 +3,5 @@
     "windowPositions": {
         "topLeft": { "x": 50, "y": 50 },
         "spacing": 50
-    },
-    "thirdPartySdks": [
-        {"name":"scrcpy", "path":"E:\\Code\\Thirdparty\\scrcpy-win64-v3.3.4\\scrcpy-win64-v3.3.4\\scrcpy.exe"}
-    ]
+    }
 }

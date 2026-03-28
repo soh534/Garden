@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using static Garden.Runner;
-using System.Text.Json;
 using NLog;
 
 namespace Garden
@@ -9,17 +7,20 @@ namespace Garden
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         // Ensure scrcpy.exe > Properties > Compatibility > Change high DPI settings > Override high DPI scaling behavior > Scaling performed by: System
-        readonly string _executablePath;
+        private const string Executable = "scrcpy";
 
-        public ScrcpyManager(string executablePath)
+        internal static bool IsAvailable()
         {
-            _executablePath = executablePath;
+            return Environment
+                .GetEnvironmentVariable("PATH")!
+                .Split(';')
+                .Any(dir => File.Exists(Path.Combine(dir, "scrcpy.exe")));
         }
 
         internal Process? Start()
         {
             ProcessStartInfo startInfo = new();
-            startInfo.FileName = _executablePath;
+            startInfo.FileName = Executable;
             startInfo.Arguments = "--no-mouse-hover --stay-awake --power-off-on-close --window-title=Garden"; // Without this, seed is planted without hovering.
             startInfo.RedirectStandardOutput = true;
             startInfo.RedirectStandardError = true;
