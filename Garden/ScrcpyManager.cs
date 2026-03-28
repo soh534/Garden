@@ -6,7 +6,6 @@ namespace Garden
     internal class ScrcpyManager
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-        // Ensure scrcpy.exe > Properties > Compatibility > Change high DPI settings > Override high DPI scaling behavior > Scaling performed by: System
         private const string Executable = "scrcpy";
 
         internal static bool IsAvailable()
@@ -56,7 +55,6 @@ namespace Garden
                 throw;
             }
 
-            return null;
         }
     }
 }

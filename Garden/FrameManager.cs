@@ -47,42 +47,31 @@ namespace Garden
 
         public Mat CaptureWindow(IntPtr hWnd)
         {
-            Win32Api.GetWindowRect(hWnd, out Win32Api.RECT windowRect);
-            int windowWidth = windowRect.Right - windowRect.Left;
-            int windowHeight = windowRect.Bottom - windowRect.Top;
-
-            using var bmp = new Bitmap(windowWidth, windowHeight, PixelFormat.Format32bppRgb);
-            using (var g = Graphics.FromImage(bmp))
-            {
-                IntPtr hdc = g.GetHdc();
-                bool success = Win32Api.PrintWindow(hWnd, hdc, 0);
-                g.ReleaseHdc(hdc);
-
-                if (!success)
-                {
-                    bmp.Dispose();
-                    throw new InvalidOperationException("PrintWindow failed.");
-                }
-            }
-
-            // Get client rect and crop out window borders
             Win32Api.GetClientRect(hWnd, out Win32Api.RECT clientRect);
-            Win32Api.POINT clientTopLeft = new Win32Api.POINT { X = clientRect.Left, Y = clientRect.Top };
+            Win32Api.POINT clientTopLeft = new Win32Api.POINT { X = 0, Y = 0 };
             Win32Api.ClientToScreen(hWnd, ref clientTopLeft);
 
-            int offsetX = clientTopLeft.X - windowRect.Left;
-            int offsetY = clientTopLeft.Y - windowRect.Top;
+            int width = clientRect.Right;
+            int height = clientRect.Bottom;
 
-            using var croppedBmp = bmp.Clone(new Rectangle(offsetX, offsetY, clientRect.Right, clientRect.Bottom), bmp.PixelFormat);
-            bmp.Dispose();
+            using var bmp = new Bitmap(width, height, PixelFormat.Format32bppRgb);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.CopyFromScreen(clientTopLeft.X, clientTopLeft.Y, 0, 0, new System.Drawing.Size(width, height));
+            }
 
-            Mat mat = OpenCvSharp.Extensions.BitmapConverter.ToMat(croppedBmp);
-            croppedBmp.Dispose();
-            return mat;
+            return OpenCvSharp.Extensions.BitmapConverter.ToMat(bmp);
         }
 
         internal void ProcessFrames(CancellationToken token, Process proc, ConcurrentQueue<string> commandQueue, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue)
         {
+            // Set this thread to Per-Monitor V2 DPI aware so that:
+            // - GetClientRect returns physical pixels (matching scrcpy's physical rendering)
+            // - OpenCV windows are sized in physical pixels (no DWM stretch, matching scrcpy visually)
+            // Save the previous context so window positioning can restore it (logical coords, matching
+            // how scrcpy was positioned from the main thread).
+            IntPtr prevDpiCtx = Win32Api.SetThreadDpiAwarenessContext(Win32Api.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
             IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
             if (hWnd == IntPtr.Zero)
             {
@@ -101,6 +90,10 @@ namespace Garden
                 try
                 {
                     using Mat frame = CaptureWindow(hWnd);
+
+                    // Switch to logical DPI context for everything that uses window-relative
+                    // coordinates recorded/played back in logical space (matching the hook thread).
+                    Win32Api.SetThreadDpiAwarenessContext(prevDpiCtx);
                     _windowPosManager.Position(Win32Api.FindWindow(null, "Captured Frame"));
                     _roiRecorder.SetCurrentFrame(frame);
 
@@ -125,6 +118,9 @@ namespace Garden
                             return; // Exit ProcessFrames if quit command was received
                         }
                     }
+
+                    // Switch back to physical DPI context for OpenCV display.
+                    Win32Api.SetThreadDpiAwarenessContext(Win32Api.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
                     // Draw and render at the end
                     DrawAction(frame);
