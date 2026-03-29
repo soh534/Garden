@@ -51,16 +51,11 @@ namespace Garden
 
         private void SetupFileWatcher()
         {
-            string roiDataPath = Path.Combine(_roiDirectory, "roi_metadata.json");
-            if (!File.Exists(roiDataPath))
-            {
-                Logger.Error("ROI metadata file not found, file watcher not started");
-                return;
-            }
-
+            Directory.CreateDirectory(_roiDirectory);
             _fileWatcher = new FileSystemWatcher(_roiDirectory, "roi_metadata.json");
-            _fileWatcher.NotifyFilter = NotifyFilters.LastWrite;
+            _fileWatcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName;
             _fileWatcher.Changed += OnRoiDataFileChanged;
+            _fileWatcher.Created += OnRoiDataFileChanged;
             _fileWatcher.EnableRaisingEvents = true;
             Logger.Info("File watcher setup for roi_metadata.json");
         }

@@ -73,21 +73,15 @@ namespace Garden
             windowY = 0;
 
             IntPtr hWnd = WindowManager.Instance.GetWindowHandle(_windowType);
-            if (hWnd == IntPtr.Zero)
-                return false;
+            if (hWnd == IntPtr.Zero) { return false; }
 
-            // Get client rectangle (just the content area)
             Win32Api.GetClientRect(hWnd, out Win32Api.RECT clientRect);
-
-            // Get client area top-left in screen coordinates
             Win32Api.POINT clientTopLeft = new Win32Api.POINT { X = clientRect.Left, Y = clientRect.Top };
             Win32Api.ClientToScreen(hWnd, ref clientTopLeft);
 
-            // Check if click is within client area
             if (screenX >= clientTopLeft.X && screenX < clientTopLeft.X + clientRect.Right &&
                 screenY >= clientTopLeft.Y && screenY < clientTopLeft.Y + clientRect.Bottom)
             {
-                // Convert to window-relative coordinates
                 windowX = screenX - clientTopLeft.X;
                 windowY = screenY - clientTopLeft.Y;
                 return true;
@@ -112,13 +106,7 @@ namespace Garden
             {
                 var hookStruct = Marshal.PtrToStructure<Win32Api.MSLLHOOKSTRUCT>(lParam);
 
-                // Scale coordinates using config value
-                double scale = WindowManager.Instance.GetScale();
-                int scaledX = (int)(hookStruct.Pt.X / scale);
-                int scaledY = (int)(hookStruct.Pt.Y / scale);
-
-                // Convert screen coordinates to scrcpy window coordinates
-                if (ConvertToWindowCoordinates(scaledX, scaledY, out int windowX, out int windowY))
+                if (ConvertToWindowCoordinates(hookStruct.Pt.X, hookStruct.Pt.Y, out int windowX, out int windowY))
                 {
                     switch ((int)wParam)
                     {

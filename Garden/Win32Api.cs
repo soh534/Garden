@@ -116,12 +116,6 @@ namespace Garden
         [DllImport("user32.dll")]
         public static extern uint GetDpiForWindow(IntPtr hWnd);
 
-        [DllImport("user32.dll")]
-        public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
-
-        // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
-        public static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = new IntPtr(-4);
-
         // ===== KERNEL32.DLL =====
 
         [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]

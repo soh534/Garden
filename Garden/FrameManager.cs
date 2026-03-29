@@ -65,13 +65,6 @@ namespace Garden
 
         internal void ProcessFrames(CancellationToken token, Process proc, ConcurrentQueue<string> commandQueue, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue)
         {
-            // Set this thread to Per-Monitor V2 DPI aware so that:
-            // - GetClientRect returns physical pixels (matching scrcpy's physical rendering)
-            // - OpenCV windows are sized in physical pixels (no DWM stretch, matching scrcpy visually)
-            // Save the previous context so window positioning can restore it (logical coords, matching
-            // how scrcpy was positioned from the main thread).
-            IntPtr prevDpiCtx = Win32Api.SetThreadDpiAwarenessContext(Win32Api.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-
             IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
             if (hWnd == IntPtr.Zero)
             {
@@ -90,10 +83,6 @@ namespace Garden
                 try
                 {
                     using Mat frame = CaptureWindow(hWnd);
-
-                    // Switch to logical DPI context for everything that uses window-relative
-                    // coordinates recorded/played back in logical space (matching the hook thread).
-                    Win32Api.SetThreadDpiAwarenessContext(prevDpiCtx);
                     _windowPosManager.Position(Win32Api.FindWindow(null, "Captured Frame"));
                     _roiRecorder.SetCurrentFrame(frame);
 
@@ -118,9 +107,6 @@ namespace Garden
                             return; // Exit ProcessFrames if quit command was received
                         }
                     }
-
-                    // Switch back to physical DPI context for OpenCV display.
-                    Win32Api.SetThreadDpiAwarenessContext(Win32Api.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
                     // Draw and render at the end
                     DrawAction(frame);

@@ -78,29 +78,17 @@ namespace Garden
             screenY = 0;
 
             IntPtr hWnd = GetScrcpyWindowHandle();
-            if (hWnd == IntPtr.Zero)
-            {
-                return false;
-            }
+            if (hWnd == IntPtr.Zero) { return false; }
 
-            // Get client area top-left in screen coordinates (same as MouseEventReporter)
             Win32Api.GetClientRect(hWnd, out Win32Api.RECT clientRect);
             Win32Api.POINT clientTopLeft = new Win32Api.POINT { X = clientRect.Left, Y = clientRect.Top };
             Win32Api.ClientToScreen(hWnd, ref clientTopLeft);
 
-            int absoluteX = (int)(clientTopLeft.X) + windowX;
-            int absoluteY = (int)(clientTopLeft.Y) + windowY;
-
-            // Get virtual screen offset to map coordinates to (0,0) origin
             int virtualScreenLeft = Win32Api.GetSystemMetrics(Win32Api.SM_XVIRTUALSCREEN);
-            int virtualScreenTop = Win32Api.GetSystemMetrics(Win32Api.SM_YVIRTUALSCREEN);
+            int virtualScreenTop  = Win32Api.GetSystemMetrics(Win32Api.SM_YVIRTUALSCREEN);
 
-            int virtualAdjustedX = absoluteX - virtualScreenLeft;
-            int virtualAdjustedY = absoluteY - virtualScreenTop;
-
-            screenX = (int)(virtualAdjustedX);
-            screenY = (int)(virtualAdjustedY);
-
+            screenX = clientTopLeft.X + windowX - virtualScreenLeft;
+            screenY = clientTopLeft.Y + windowY - virtualScreenTop;
             return true;
         }
     }

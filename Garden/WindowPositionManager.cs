@@ -27,22 +27,18 @@ namespace Garden
 
         public void Position(IntPtr hWnd)
         {
-            if (hWnd == IntPtr.Zero) return;
+            if (hWnd == IntPtr.Zero) { return; }
 
-            // Position the window without advancing
             Win32Api.SetWindowPos(hWnd, IntPtr.Zero, _currentX, _y, 0, 0,
                 Win32Api.SWP_NOSIZE | Win32Api.SWP_NOZORDER);
         }
 
         public void PositionAndAdvance(IntPtr hWnd)
         {
-            if (hWnd == IntPtr.Zero) return;
+            if (hWnd == IntPtr.Zero) { return; }
 
-            // Position the window
             Win32Api.SetWindowPos(hWnd, IntPtr.Zero, _currentX, _y, 0, 0,
                 Win32Api.SWP_NOSIZE | Win32Api.SWP_NOZORDER);
-
-            // Get window width and advance currentX for next window
             if (Win32Api.GetWindowRect(hWnd, out Win32Api.RECT rect))
             {
                 int width = rect.Right - rect.Left;
