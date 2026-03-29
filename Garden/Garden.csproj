@@ -25,4 +25,10 @@
     </None>
   </ItemGroup>
 
+  <Target Name="CopyNativeLibs" AfterTargets="Build">
+    <Copy SourceFiles="$(OutputPath)runtimes\win-x64\native\OpenCvSharpExtern.dll"
+          DestinationFolder="$(OutputPath)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>
