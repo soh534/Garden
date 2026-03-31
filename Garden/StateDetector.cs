@@ -228,6 +228,7 @@ namespace Garden
                     return;
                 }
 
+                string previousState = CurrentState;
                 CurrentState = string.Empty;
 
                 // Allocate array if size changed
@@ -244,7 +245,7 @@ namespace Garden
                     }
                 }
 
-                if (CurrentState != string.Empty && DetectSingleState(frame, CurrentState))
+                if (previousState != string.Empty && DetectSingleState(frame, previousState))
                 {
                     return;
                 }
