@@ -25,8 +25,11 @@ namespace Garden
         // Key = state, value = List of RoiData
         private SavedRoiData _savedRoiData;
 
+        private const double ContourDetectionThreshold = 0.6;
+
         // Key = $"{state.Key}/{roi.name}"
         private Dictionary<string, Mat> _roiMats = new();
+        private Dictionary<string, (OpenCvSharp.Point[] contour, double area)> _contourRefs = new();
         private FileSystemWatcher _fileWatcher;
         private readonly object _roiMatsLock = new object();
 
@@ -110,7 +113,24 @@ namespace Garden
                     {
                         Mat roiMat = Cv2.ImRead(roiPath, ImreadModes.Color);
                         _roiMats[key] = roiMat;
-                        Logger.Info($"Loaded ROI: {key}");
+
+                        if (roi.roiType == "contour")
+                        {
+                            OpenCvSharp.Point[]? refContour = ExtractReferenceContour(roiMat);
+                            if (refContour != null)
+                            {
+                                _contourRefs[key] = (refContour, Cv2.ContourArea(refContour));
+                                Logger.Info($"Loaded contour ROI: {key} (area={Cv2.ContourArea(refContour):F1})");
+                            }
+                            else
+                            {
+                                Logger.Warn($"Could not extract contour from ROI: {key}");
+                            }
+                        }
+                        else
+                        {
+                            Logger.Info($"Loaded ROI: {key}");
+                        }
                     }
                     else
                     {
@@ -270,7 +290,18 @@ namespace Garden
                         throw new InvalidOperationException($"ROI '{stateName}/{roiName}' has no frame dimensions recorded. Re-record this ROI.");
                     }
                     double scale = (double)frame.Width / roiData.frameWidth;
-                    DetectRoi(frame, roiMat, scale, out double minVal, out int centerX, out int centerY);
+
+                    double minVal;
+                    int centerX, centerY;
+                    if (roiData.roiType == "contour" && _contourRefs.TryGetValue(roiKey, out var contourRef))
+                    {
+                        DetectContourRoi(frame, contourRef.contour, contourRef.area, scale, out double combinedScore, out centerX, out centerY);
+                        minVal = combinedScore < ContourDetectionThreshold ? 0.0 : 1.0;
+                    }
+                    else
+                    {
+                        DetectRoi(frame, roiMat, scale, out minVal, out centerX, out centerY);
+                    }
 
                     RoiDetectionInfos[index++] = new RoiDetectionInfo
                     {
@@ -338,7 +369,19 @@ namespace Garden
                     throw new InvalidOperationException($"ROI '{state}/{roiData.name}' has no frame dimensions recorded. Re-record this ROI.");
                 }
                 double scale = (double)frame.Width / roiData.frameWidth;
-                DetectRoi(frame, roiMat, scale, out double minVal, out int centerX, out int centerY);
+
+                double minVal;
+                int centerX, centerY;
+                string roiKey = $"{state}/{roiData.name}";
+                if (roiData.roiType == "contour" && _contourRefs.TryGetValue(roiKey, out var contourRef))
+                {
+                    DetectContourRoi(frame, contourRef.contour, contourRef.area, scale, out double combinedScore, out centerX, out centerY);
+                    minVal = combinedScore < ContourDetectionThreshold ? 0.0 : 1.0;
+                }
+                else
+                {
+                    DetectRoi(frame, roiMat, scale, out minVal, out centerX, out centerY);
+                }
 
                 RoiDetectionInfos[index++] = new RoiDetectionInfo
                 {
@@ -376,6 +419,91 @@ namespace Garden
                 : new List<string>();
         }
 
+        private static OpenCvSharp.Point[]? ExtractReferenceContour(Mat roiMat)
+        {
+            using Mat gray = new Mat();
+            using Mat binary = new Mat();
+            Cv2.CvtColor(roiMat, gray, ColorConversionCodes.BGR2GRAY);
+            Cv2.Threshold(gray, binary, 200, 255, ThresholdTypes.Binary);
+            Cv2.FindContours(binary, out OpenCvSharp.Point[][] contours, out _,
+                RetrievalModes.External, ContourApproximationModes.ApproxSimple);
+            if (contours.Length == 0) { return null; }
+            return contours.OrderByDescending(c => Cv2.ContourArea(c)).First();
+        }
+
+        private static double ComputeInnerDarkFrac(Mat gray, OpenCvSharp.Point[] contour, byte darkThresh = 120)
+        {
+            Rect bbox = Cv2.BoundingRect(contour);
+            int x = Math.Max(0, bbox.X);
+            int y = Math.Max(0, bbox.Y);
+            int x2 = Math.Min(gray.Width, bbox.X + bbox.Width);
+            int y2 = Math.Min(gray.Height, bbox.Y + bbox.Height);
+            int w = x2 - x;
+            int h = y2 - y;
+            if (w <= 0 || h <= 0) { return 0.0; }
+
+            using Mat mask = Mat.Zeros(gray.Size(), MatType.CV_8UC1);
+            Cv2.DrawContours(mask, new[] { contour }, -1, Scalar.White, -1);
+
+            Rect croppedRect = new Rect(x, y, w, h);
+            using Mat bboxGray = new Mat(gray, croppedRect);
+            using Mat bboxMask = new Mat(mask, croppedRect);
+
+            using Mat gapMask = new Mat();
+            Cv2.BitwiseNot(bboxMask, gapMask);
+
+            using Mat darkBinary = new Mat();
+            Cv2.Threshold(bboxGray, darkBinary, darkThresh, 255, ThresholdTypes.BinaryInv);
+
+            using Mat darkGap = new Mat();
+            Cv2.BitwiseAnd(darkBinary, gapMask, darkGap);
+
+            double totalGap = Cv2.CountNonZero(gapMask);
+            if (totalGap == 0) { return 0.0; }
+            return Cv2.CountNonZero(darkGap) / totalGap;
+        }
+
+        private void DetectContourRoi(Mat frame, OpenCvSharp.Point[] refContour, double refArea, double scale,
+            out double combinedScore, out int centerX, out int centerY)
+        {
+            double expectedArea = refArea * scale * scale;
+            double minArea = expectedArea / 3.0;
+            double maxArea = expectedArea * 3.0;
+
+            using Mat gray = new Mat();
+            using Mat binary = new Mat();
+            Cv2.CvtColor(frame, gray, ColorConversionCodes.BGR2GRAY);
+            Cv2.Threshold(gray, binary, 200, 255, ThresholdTypes.Binary);
+            Cv2.FindContours(binary, out OpenCvSharp.Point[][] contours, out _,
+                RetrievalModes.List, ContourApproximationModes.ApproxSimple);
+
+            combinedScore = double.MaxValue;
+            centerX = 0;
+            centerY = 0;
+
+            foreach (OpenCvSharp.Point[] c in contours)
+            {
+                double area = Cv2.ContourArea(c);
+                if (area < minArea || area > maxArea) { continue; }
+
+                double shapeScore = Cv2.MatchShapes(refContour, c, ShapeMatchModes.I1, 0);
+                double areaRatio = Math.Abs(area / expectedArea - 1.0);
+                double darkFrac = ComputeInnerDarkFrac(gray, c);
+                double score = 2 * shapeScore + areaRatio - 0.5 * darkFrac;
+
+                if (score < combinedScore)
+                {
+                    combinedScore = score;
+                    Moments m = Cv2.Moments(c);
+                    if (m.M00 != 0)
+                    {
+                        centerX = (int)(m.M10 / m.M00);
+                        centerY = (int)(m.M01 / m.M00);
+                    }
+                }
+            }
+        }
+
         private void DetectRoi(Mat frame, Mat roiMat, double scale, out double minVal, out int centerX, out int centerY)
         {
             int scaledW = (int)(roiMat.Width * scale);
@@ -411,6 +539,7 @@ namespace Garden
                     roiMat.Dispose();
                 }
                 _roiMats.Clear();
+                _contourRefs.Clear();
 
                 // Reload metadata and ROI mats
                 LoadRoiData();

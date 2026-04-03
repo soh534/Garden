@@ -16,6 +16,7 @@ namespace Garden
             public int height { get; set; }
             public int frameWidth { get; set; }
             public int frameHeight { get; set; }
+            public string roiType { get; set; } = "template";
         }
 
         private readonly string _saveDirectory;
@@ -130,47 +131,47 @@ namespace Garden
         private void PromptAndSaveRoi(Mat roiMat, string stateName, int x, int y, int width, int height, int frameWidth, int frameHeight)
         {
             Console.Write("Enter ROI name: ");
-
-            // Signal that we're waiting for input
             _isWaitingForInput = true;
 
-            // Wait for input from command queue
             string? roiName = null;
             while (roiName == null)
             {
-                if (_commandQueue.TryDequeue(out var input))
-                {
-                    roiName = input;
-                }
-                else
-                {
-                    Thread.Sleep(50);
-                }
+                if (_commandQueue.TryDequeue(out var input)) { roiName = input; }
+                else { Thread.Sleep(50); }
             }
-
-            _isWaitingForInput = false;
 
             if (string.IsNullOrWhiteSpace(roiName))
             {
+                _isWaitingForInput = false;
                 Console.WriteLine("ROI name cannot be empty. ROI discarded.");
                 roiMat.Dispose();
                 return;
             }
 
+            Console.Write("Contour detection? (y/n): ");
+            string? typeInput = null;
+            while (typeInput == null)
+            {
+                if (_commandQueue.TryDequeue(out var input)) { typeInput = input; }
+                else { Thread.Sleep(50); }
+            }
+
+            _isWaitingForInput = false;
+
+            string roiType = typeInput.Trim().ToLower() == "y" ? "contour" : "template";
+
             string stateDirectory = Path.Combine(_saveDirectory, stateName);
             Directory.CreateDirectory(stateDirectory);
-            string filename = $"{roiName}.png";
-            string filePath = Path.Combine(stateDirectory, filename);
+            string filePath = Path.Combine(stateDirectory, $"{roiName}.png");
 
-            // Save original ROI
             Cv2.ImWrite(filePath, roiMat);
-            Console.WriteLine($"ROI saved to {filePath}");
+            Console.WriteLine($"ROI saved to {filePath} (type: {roiType})");
 
             roiMat.Dispose();
-            SaveRoiData(stateName, roiName, x, y, width, height, frameWidth, frameHeight);
+            SaveRoiData(stateName, roiName, roiType, x, y, width, height, frameWidth, frameHeight);
         }
 
-        private void SaveRoiData(string stateName, string roiName, int x, int y, int width, int height, int frameWidth, int frameHeight)
+        private void SaveRoiData(string stateName, string roiName, string roiType, int x, int y, int width, int height, int frameWidth, int frameHeight)
         {
             string roiDataPath = Path.Combine(_saveDirectory, "roi_metadata.json");
 
@@ -198,6 +199,7 @@ namespace Garden
             if (existingRoi != null)
             {
                 // Overwrite existing ROI
+                existingRoi.roiType = roiType;
                 existingRoi.x = x;
                 existingRoi.y = y;
                 existingRoi.width = width;
@@ -212,6 +214,7 @@ namespace Garden
                 savedRoiData[stateName].Add(new RoiData
                 {
                     name = roiName,
+                    roiType = roiType,
                     x = x,
                     y = y,
                     width = width,
@@ -314,7 +317,7 @@ namespace Garden
                     Console.WriteLine($"  {state.Key} ({state.Value.Count} ROIs)");
                     foreach (var roi in state.Value)
                     {
-                        Console.WriteLine($"    - {roi.name} [{roi.width}x{roi.height}]");
+                        Console.WriteLine($"    - {roi.name} [{roi.width}x{roi.height}] ({roi.roiType})");
                     }
                 }
                 Console.WriteLine("==========================================\n");

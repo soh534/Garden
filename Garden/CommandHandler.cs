@@ -136,6 +136,7 @@ namespace Garden
             if (parts.Length == 3)
             {
                 string filename = parts[2].Trim();
+                if (!filename.EndsWith(".png", StringComparison.OrdinalIgnoreCase)) { filename += ".png"; }
                 string savePath = Path.Combine(_imageSavePath, filename);
                 Directory.CreateDirectory(_imageSavePath);
                 if (File.Exists(savePath))
@@ -143,7 +144,7 @@ namespace Garden
                     Logger.Info($"Warning: Overwriting existing file {savePath}");
                 }
                 Cv2.ImWrite(savePath, frame);
-                Logger.Info($"Frame saved to {savePath}");
+                Console.WriteLine($"Saved: {savePath}");
             }
             else
             {

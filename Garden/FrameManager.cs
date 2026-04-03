@@ -74,6 +74,14 @@ namespace Garden
 
             Cv2.NamedWindow("Captured Frame", WindowFlags.AutoSize);
 
+            // Position window once — show dummy frame first so it has a real size
+            using (Mat dummy = Mat.Zeros(100, 100, MatType.CV_8UC3))
+            {
+                Cv2.ImShow("Captured Frame", dummy);
+                Cv2.WaitKey(1);
+            }
+            _windowPosManager.PositionAndAdvance(Win32Api.FindWindow(null, "Captured Frame"));
+
             var commandHandler = new CommandHandler(_imageSavePath, _mouseRecorder, _actionPlayer, actionQueue, _roiRecorder, this);
 
             while (!token.IsCancellationRequested && !proc.HasExited)
@@ -83,7 +91,6 @@ namespace Garden
                 try
                 {
                     using Mat frame = CaptureWindow(hWnd);
-                    _windowPosManager.Position(Win32Api.FindWindow(null, "Captured Frame"));
                     _roiRecorder.SetCurrentFrame(frame);
 
                     if (!_roiRecorder.IsRecording)
