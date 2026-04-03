@@ -150,26 +150,24 @@ namespace Garden
 
             _isWaitingForInput = false;
 
-            if (!string.IsNullOrWhiteSpace(roiName))
-            {
-                string stateDirectory = Path.Combine(_saveDirectory, stateName);
-                Directory.CreateDirectory(stateDirectory);
-                string filename = $"{roiName}.png";
-                string filePath = Path.Combine(stateDirectory, filename);
-
-                // Save original ROI
-                Cv2.ImWrite(filePath, roiMat);
-                Console.WriteLine($"ROI saved to {filePath}");
-
-                // Save metadata
-                SaveRoiData(stateName, roiName, x, y, width, height, frameWidth, frameHeight);
-            }
-            else
+            if (string.IsNullOrWhiteSpace(roiName))
             {
                 Console.WriteLine("ROI name cannot be empty. ROI discarded.");
+                roiMat.Dispose();
+                return;
             }
 
+            string stateDirectory = Path.Combine(_saveDirectory, stateName);
+            Directory.CreateDirectory(stateDirectory);
+            string filename = $"{roiName}.png";
+            string filePath = Path.Combine(stateDirectory, filename);
+
+            // Save original ROI
+            Cv2.ImWrite(filePath, roiMat);
+            Console.WriteLine($"ROI saved to {filePath}");
+
             roiMat.Dispose();
+            SaveRoiData(stateName, roiName, x, y, width, height, frameWidth, frameHeight);
         }
 
         private void SaveRoiData(string stateName, string roiName, int x, int y, int width, int height, int frameWidth, int frameHeight)

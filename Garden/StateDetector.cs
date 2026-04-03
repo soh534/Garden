@@ -237,6 +237,7 @@ namespace Garden
                     RoiDetectionInfos = new RoiDetectionInfo[_roiMats.Count];
                 }
 
+                // Early-out 1: check FSM-expected next states first — most likely transitions
                 foreach (string expectedState in NextExpectedStates)
                 {
                     if (DetectSingleState(frame, expectedState))
@@ -245,12 +246,13 @@ namespace Garden
                     }
                 }
 
+                // Early-out 2: re-check the previous state — state rarely changes frame-to-frame
                 if (previousState != string.Empty && DetectSingleState(frame, previousState))
                 {
                     return;
                 }
 
-                // Detect all ROIs
+                // Full scan: check all ROIs
                 int index = 0;
                 foreach (KeyValuePair<string, Mat> kvp in _roiMats)
                 {
@@ -320,7 +322,12 @@ namespace Garden
 
         private bool DetectSingleState(Mat frame, string state)
         {
-            List<RoiData> nextExpectedStateRois = _savedRoiData[state];
+            // FSM may reference states that haven't been recorded as ROIs yet
+            if (!_savedRoiData.TryGetValue(state, out List<RoiData>? nextExpectedStateRois))
+            {
+                return false;
+            }
+
             int index = 0;
             foreach (RoiData roiData in nextExpectedStateRois)
             {

@@ -171,18 +171,18 @@ namespace Garden
                 // Draw state name
                 Cv2.PutText(frame, roiDetectionInfo.StateName,
                     new OpenCvSharp.Point(box.X, box.Y - 35),
-                    HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 1);
+                    HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 2);
 
                 // Draw ROI name
                 Cv2.PutText(frame, roiDetectionInfo.RoiName,
                     new OpenCvSharp.Point(box.X, box.Y - 20),
-                    HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 1);
+                    HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 2);
 
                 // Draw minVal
                 string minValText = $"{roiDetectionInfo.MinVal:F3}";
                 Cv2.PutText(frame, minValText,
                     new OpenCvSharp.Point(box.X, box.Y - 5),
-                    HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 1);
+                    HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 2);
 
                 break; // Temporarily just draw first ROI. Remove to draw multiple
             }
@@ -191,11 +191,15 @@ namespace Garden
         private void DrawState(Mat frame)
         {
             string currentState = _stateDetector.CurrentState;
+            List<string> nextStates = _stateDetector.NextExpectedStates;
+            string nextText = nextStates.Count > 0
+                ? $"Next: {string.Join(", ", nextStates)}"
+                : "Next: none";
 
             if (string.IsNullOrEmpty(currentState))
             {
                 Cv2.PutText(frame, "State: unknown", new OpenCvSharp.Point(10, 20),
-                    HersheyFonts.HersheySimplex, 0.5, Scalar.Yellow, 1);
+                    HersheyFonts.HersheySimplex, 0.5, Scalar.Yellow, 2);
             }
             else
             {
@@ -204,8 +208,11 @@ namespace Garden
                 double confidence = stateRois.Count > 0 ? stateRois.Average(r => r.MinVal) : 0.0;
 
                 Cv2.PutText(frame, $"State: {currentState} ({confidence:F3})", new OpenCvSharp.Point(10, 20),
-                    HersheyFonts.HersheySimplex, 0.5, Scalar.Yellow, 1);
+                    HersheyFonts.HersheySimplex, 0.5, Scalar.Yellow, 2);
             }
+
+            Cv2.PutText(frame, nextText, new OpenCvSharp.Point(10, 40),
+                HersheyFonts.HersheySimplex, 0.5, Scalar.Cyan, 2);
         }
 
     }
