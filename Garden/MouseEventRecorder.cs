@@ -80,6 +80,7 @@ namespace Garden
         protected override void OnMouseClick(object? sender, MouseEventReporter.MouseEvent e)
         {
             _recordedEvents.Add(e);
+            Console.WriteLine($"{(e.IsMouseDown ? "Mouse down" : "Mouse up")} at ({e.X}, {e.Y})");
         }
 
         protected override void OnMouseMove(object? sender, MouseEventReporter.MouseEvent e)

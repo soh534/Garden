@@ -31,6 +31,7 @@ namespace Garden
             string actionSavePath = Path.Combine(dataRoot, "actions");
             string roiSavePath    = Path.Combine(dataRoot, "rois");
             string fsmPath        = Path.Combine(dataRoot, "fsm.json");
+            string luaScriptPath  = Path.Combine(dataRoot, "gardenbot.lua");
 
             if (!ScrcpyManager.IsAvailable())
             {
@@ -82,10 +83,7 @@ namespace Garden
             Fsm fsm = new(fsmPath);
             StateDetector stateDetector = new(fsm, roiSavePath);
 
-            // Initialize bot with action queue, detector, and action player
-            // Bot for Garden game
-            BotBase bot = new GardenBot();
-            bot.Initialize(actionQueue, stateDetector, actionPlayer);
+            LuaBot bot = new(luaScriptPath, stateDetector, actionPlayer);
             FrameManager ssManager = new(imageSavePath, bot, mouseRecorder, actionPlayer, roiRecorder, stateDetector, windowPosManager);
 
 

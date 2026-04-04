@@ -312,9 +312,10 @@ namespace Garden
                     };
                 }
 
-                // Find the best matching state
+                // Find the best matching state — prefer more ROIs (more specific), then lower avgMinVal
                 string bestStateName = string.Empty;
                 double bestAvgMinVal = double.MaxValue;
+                int bestRoiCount = 0;
                 RoiDetectionInfo[] bestStateRois = Array.Empty<RoiDetectionInfo>();
 
                 foreach (var state in _savedRoiData)
@@ -327,20 +328,26 @@ namespace Garden
 
                     if (stateDetectedRois.Count == expectedRois.Count)
                     {
-                        // All ROIs found for this state
                         double avgMinVal = stateDetectedRois.Average(r => r.MinVal);
-
-                        // Check if this state is better (most ROIs, then lowest minVal)
-                        if (avgMinVal < bestAvgMinVal)
+                        if (avgMinVal < 0.003)
                         {
-                            bestStateName = stateName;
-                            bestAvgMinVal = avgMinVal;
-                            bestStateRois = stateDetectedRois.ToArray();
+                            int roiCount = expectedRois.Count;
+
+                            bool moreSpecific = roiCount > bestRoiCount;
+                            bool sameSpecificityButBetter = roiCount == bestRoiCount && avgMinVal < bestAvgMinVal;
+
+                            if (moreSpecific || sameSpecificityButBetter)
+                            {
+                                bestStateName = stateName;
+                                bestAvgMinVal = avgMinVal;
+                                bestRoiCount = roiCount;
+                                bestStateRois = stateDetectedRois.ToArray();
+                            }
                         }
                     }
                 }
 
-                if (bestAvgMinVal < 0.001)
+                if (bestStateName != string.Empty)
                 {
                     CurrentState = bestStateName;
                     NextExpectedStates = GetNextExpectedStates(CurrentState);
@@ -401,7 +408,7 @@ namespace Garden
                 double avgMinVal = nextExpectedStateDetectedRois.Average(r => r.MinVal);
 
                 // Check if this state is better (most ROIs, then lowest minVal)
-                if (avgMinVal < 0.001)
+                if (avgMinVal < 0.003)
                 {
                     CurrentState = state;
                     NextExpectedStates = GetNextExpectedStates(CurrentState);

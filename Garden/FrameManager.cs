@@ -13,7 +13,7 @@ namespace Garden
     internal class FrameManager
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-        private readonly BotBase _bot;
+        private readonly LuaBot _bot;
         private readonly MouseEventRecorder _mouseRecorder;
         private readonly ActionPlayer _actionPlayer;
         private readonly RoiRecorder _roiRecorder;
@@ -34,7 +34,7 @@ namespace Garden
         public void EnableBot() => _isBotEnabled = true;
         public void DisableBot() => _isBotEnabled = false;
 
-        public FrameManager(string imageSavePath, BotBase bot, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, RoiRecorder roiRecorder, StateDetector stateDetector, WindowPositionManager windowPosManager)
+        public FrameManager(string imageSavePath, LuaBot bot, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, RoiRecorder roiRecorder, StateDetector stateDetector, WindowPositionManager windowPosManager)
         {
             _imageSavePath = imageSavePath;
             _bot = bot;
