@@ -36,6 +36,7 @@ namespace Garden
         public RoiDetectionInfo[] RoiDetectionInfos { get; private set; } = Array.Empty<RoiDetectionInfo>();
         public string CurrentState { get; private set; } = string.Empty;
         public List<string> NextExpectedStates { get; set; } = new();
+        public Dictionary<string, double> RoiTimings { get; } = new();
 
         public Mat? GetRoiMat(string stateName, string roiName)
         {
@@ -366,6 +367,7 @@ namespace Garden
                 return false;
             }
 
+            var sw = Stopwatch.StartNew();
             int index = 0;
             foreach (RoiData roiData in nextExpectedStateRois)
             {
@@ -380,6 +382,7 @@ namespace Garden
                 double minVal;
                 int centerX, centerY;
                 string roiKey = $"{state}/{roiData.name}";
+                sw.Restart();
                 if (roiData.roiType == "contour" && _contourRefs.TryGetValue(roiKey, out var contourRef))
                 {
                     DetectContourRoi(frame, contourRef.contour, contourRef.area, scale, out double combinedScore, out centerX, out centerY);
@@ -389,6 +392,7 @@ namespace Garden
                 {
                     DetectRoi(frame, roiMat, scale, out minVal, out centerX, out centerY);
                 }
+                RoiTimings[roiKey] = sw.Elapsed.TotalMilliseconds;
 
                 RoiDetectionInfos[index++] = new RoiDetectionInfo
                 {

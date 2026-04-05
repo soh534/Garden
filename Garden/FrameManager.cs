@@ -28,6 +28,10 @@ namespace Garden
 
         private const int TARGET_FRAME_TIME_MS = 33;
 
+        // Profiling
+        private readonly Stopwatch _sw = new();
+        private double _msCapture, _msDetect, _msDraw;
+
         // Bot control
         private bool _isBotEnabled = false;
         public bool IsBotEnabled => _isBotEnabled;
@@ -90,9 +94,12 @@ namespace Garden
 
                 try
                 {
+                    _sw.Restart();
                     using Mat frame = CaptureWindow(hWnd);
                     _roiRecorder.SetCurrentFrame(frame);
+                    _msCapture = _sw.Elapsed.TotalMilliseconds;
 
+                    _sw.Restart();
                     if (!_roiRecorder.IsRecording)
                     {
                         _stateDetector.DetectState(frame);
@@ -114,15 +121,17 @@ namespace Garden
                             return; // Exit ProcessFrames if quit command was received
                         }
                     }
+                    _msDetect = _sw.Elapsed.TotalMilliseconds;
 
-                    // Draw and render at the end
+                    _sw.Restart();
                     DrawAction(frame);
                     DrawCreatingRoi(frame, _roiRecorder);
                     DrawDetectedRois(frame, _stateDetector, _roiRecorder);
                     DrawState(frame);
+                    DrawProfiler(frame);
                     Cv2.ImShow("Captured Frame", frame);
-
                     int key = Cv2.WaitKey(1);
+                    _msDraw = _sw.Elapsed.TotalMilliseconds;
                 }
                 catch (Exception e)
                 {
@@ -192,6 +201,22 @@ namespace Garden
                     HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 2);
 
                 break; // Temporarily just draw first ROI. Remove to draw multiple
+            }
+        }
+
+        private void DrawProfiler(Mat frame)
+        {
+            double total = _msCapture + _msDetect + _msDraw;
+            double fps = total > 0 ? 1000.0 / total : 0;
+            Cv2.PutText(frame, $"FPS:{fps:F0} Cap:{_msCapture:F1}ms Det:{_msDetect:F1}ms Draw:{_msDraw:F1}ms",
+                new OpenCvSharp.Point(10, 60), HersheyFonts.HersheySimplex, 0.5, Scalar.White, 2);
+
+            int y = 80;
+            foreach (var (key, ms) in _stateDetector.RoiTimings)
+            {
+                Cv2.PutText(frame, $"  {key}: {ms:F1}ms",
+                    new OpenCvSharp.Point(10, y), HersheyFonts.HersheySimplex, 0.5, Scalar.White, 2);
+                y += 20;
             }
         }
 
