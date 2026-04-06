@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 
 using OpenCvSharp;
 using System.Drawing;
@@ -19,16 +19,16 @@ namespace Garden
         private readonly RoiRecorder _roiRecorder;
         private readonly StateDetector _stateDetector;
         private readonly WindowPositionManager _windowPosManager;
-        // You take a picture via
-        // 1. open_a_terminal_here.bat
-        // 2. adb exec-out screencap -p > file.png
-        // 3. this saves file.png which is current phone screen under same path as open_a_terminal_here.bat
 
         private readonly string _imageSavePath;
 
         private const int TARGET_FRAME_TIME_MS = 33;
 
-        // Profiling
+        // Shared frame between render and detection threads
+        private Mat? _sharedFrame;
+        private readonly object _frameLock = new();
+
+        // Profiling (_msCapture/_msDraw written by render thread, _msDetect written by detection thread)
         private readonly Stopwatch _sw = new();
         private double _msCapture, _msDetect, _msDraw;
 
@@ -67,8 +67,10 @@ namespace Garden
             return OpenCvSharp.Extensions.BitmapConverter.ToMat(bmp);
         }
 
-        internal void ProcessFrames(CancellationToken token, Process proc, ConcurrentQueue<string> commandQueue, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue)
+        internal void ProcessFrames(CancellationTokenSource cts, Process proc, ConcurrentQueue<string> commandQueue, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue)
         {
+            var token = cts.Token;
+
             IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
             if (hWnd == IntPtr.Zero)
             {
@@ -77,8 +79,6 @@ namespace Garden
             }
 
             Cv2.NamedWindow("Captured Frame", WindowFlags.AutoSize);
-
-            // Position window once — show dummy frame first so it has a real size
             using (Mat dummy = Mat.Zeros(100, 100, MatType.CV_8UC3))
             {
                 Cv2.ImShow("Captured Frame", dummy);
@@ -87,6 +87,9 @@ namespace Garden
             _windowPosManager.PositionAndAdvance(Win32Api.FindWindow(null, "Captured Frame"));
 
             var commandHandler = new CommandHandler(_imageSavePath, _mouseRecorder, _actionPlayer, actionQueue, _roiRecorder, this);
+
+            Task detectionTask = Task.Run(() => DetectionLoop(token, actionQueue));
+            Task controlTask = Task.Run(() => ControlLoop(token));
 
             while (!token.IsCancellationRequested && !proc.HasExited)
             {
@@ -99,53 +102,95 @@ namespace Garden
                     _roiRecorder.SetCurrentFrame(frame);
                     _msCapture = _sw.Elapsed.TotalMilliseconds;
 
-                    _sw.Restart();
-                    if (!_roiRecorder.IsRecording)
+                    lock (_frameLock)
                     {
-                        _stateDetector.DetectState(frame);
+                        _sharedFrame?.Dispose();
+                        _sharedFrame = frame.Clone();
                     }
 
-                    if (_isBotEnabled && actionQueue.IsEmpty)
-                    {
-                        _bot.QueueStateResponse();
-                    }
-
-                    _actionPlayer.StepAction(frameStartTime);
-
-                    // Process terminal commands (skip if ROI is waiting for input)
                     if (!_roiRecorder.IsWaitingForInput && commandQueue.TryDequeue(out var command))
                     {
                         bool shouldContinue = commandHandler.Handle(command, frame);
                         if (!shouldContinue)
                         {
-                            return; // Exit ProcessFrames if quit command was received
+                            cts.Cancel();
+                            break;
                         }
                     }
-                    _msDetect = _sw.Elapsed.TotalMilliseconds;
 
+                    var snapshot = _stateDetector.Snapshot;
                     _sw.Restart();
-                    DrawAction(frame);
                     DrawCreatingRoi(frame, _roiRecorder);
-                    DrawDetectedRois(frame, _stateDetector, _roiRecorder);
-                    DrawState(frame);
-                    DrawProfiler(frame);
+                    if (!_roiRecorder.IsRecording)
+                    {
+                        DrawAction(frame);
+                        DrawDetectedRois(frame, snapshot);
+                        DrawState(frame, snapshot);
+                        DrawProfiler(frame, snapshot);
+                    }
                     Cv2.ImShow("Captured Frame", frame);
-                    int key = Cv2.WaitKey(1);
+                    Cv2.WaitKey(1);
                     _msDraw = _sw.Elapsed.TotalMilliseconds;
                 }
                 catch (Exception e)
                 {
-                    Logger.Error($"Error capturing frame: {e.Message}");
+                    Logger.Error($"Error in render loop: {e.Message}");
                     throw;
                 }
 
-                // Calculate frame time and sleep for remaining time
                 var frameElapsed = (DateTime.Now - frameStartTime).TotalMilliseconds;
                 int sleepTime = Math.Max(0, TARGET_FRAME_TIME_MS - (int)frameElapsed);
                 Thread.Sleep(sleepTime);
             }
 
-            return;
+            Task.WaitAll(detectionTask, controlTask);
+        }
+
+        private void DetectionLoop(CancellationToken token, ConcurrentQueue<ActionPlayer.MouseEvent> actionQueue)
+        {
+            var sw = new Stopwatch();
+
+            while (!token.IsCancellationRequested)
+            {
+                Mat? frame = null;
+                lock (_frameLock)
+                {
+                    if (_sharedFrame != null)
+                    {
+                        frame = _sharedFrame.Clone();
+                    }
+                }
+
+                if (frame == null)
+                {
+                    Thread.Sleep(1);
+                    continue;
+                }
+
+                try
+                {
+                    sw.Restart();
+                    _stateDetector.DetectState(frame);
+                    if (_isBotEnabled && actionQueue.IsEmpty)
+                    {
+                        _bot.QueueStateResponse();
+                    }
+                    _msDetect = sw.Elapsed.TotalMilliseconds;
+                }
+                finally
+                {
+                    frame.Dispose();
+                }
+            }
+        }
+
+        private void ControlLoop(CancellationToken token)
+        {
+            while (!token.IsCancellationRequested)
+            {
+                _actionPlayer.StepAction(DateTime.Now);
+                Thread.Sleep(10);
+            }
         }
 
         private void DrawAction(Mat frame)
@@ -153,7 +198,6 @@ namespace Garden
             var cursorPos = _actionPlayer.CurrentCursorPosition;
             if (cursorPos.HasValue)
             {
-                // Draw circle at interpolated position
                 Cv2.Circle(frame, cursorPos.Value, 10, Scalar.Red, 2);
             }
         }
@@ -167,44 +211,36 @@ namespace Garden
             }
         }
 
-        private void DrawDetectedRois(Mat frame, StateDetector stateDetector, RoiRecorder roiRecorder)
+        private void DrawDetectedRois(Mat frame, StateDetector.DetectionSnapshot snapshot)
         {
-            // Don't draw if in ROI recording mode
-            if (roiRecorder.IsRecording) return;
-
-            foreach (var roiDetectionInfo in stateDetector.RoiDetectionInfos)
+            foreach (var roiDetectionInfo in snapshot.RoiDetectionInfos)
             {
-                Mat? roiMat = stateDetector.GetRoiMat(roiDetectionInfo.StateName, roiDetectionInfo.RoiName);
-                if (roiMat == null) continue;
+                Mat? roiMat = _stateDetector.GetRoiMat(roiDetectionInfo.StateName, roiDetectionInfo.RoiName);
+                if (roiMat == null) { continue; }
 
-                // Calculate bounding box from center and dimensions
                 int topLeftX = roiDetectionInfo.Center.X - roiMat.Width / 2;
                 int topLeftY = roiDetectionInfo.Center.Y - roiMat.Height / 2;
                 Rect box = new Rect(topLeftX, topLeftY, roiMat.Width, roiMat.Height);
 
                 Cv2.Rectangle(frame, box, Scalar.Blue, 2);
 
-                // Draw state name
                 Cv2.PutText(frame, roiDetectionInfo.StateName,
                     new OpenCvSharp.Point(box.X, box.Y - 35),
                     HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 2);
 
-                // Draw ROI name
                 Cv2.PutText(frame, roiDetectionInfo.RoiName,
                     new OpenCvSharp.Point(box.X, box.Y - 20),
                     HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 2);
 
-                // Draw minVal
-                string minValText = $"{roiDetectionInfo.MinVal:F3}";
-                Cv2.PutText(frame, minValText,
+                Cv2.PutText(frame, $"{roiDetectionInfo.MinVal:F3}",
                     new OpenCvSharp.Point(box.X, box.Y - 5),
                     HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 2);
 
-                break; // Temporarily just draw first ROI. Remove to draw multiple
+                break;
             }
         }
 
-        private void DrawProfiler(Mat frame)
+        private void DrawProfiler(Mat frame, StateDetector.DetectionSnapshot snapshot)
         {
             double total = _msCapture + _msDetect + _msDraw;
             double fps = total > 0 ? 1000.0 / total : 0;
@@ -212,7 +248,7 @@ namespace Garden
                 new OpenCvSharp.Point(10, 60), HersheyFonts.HersheySimplex, 0.5, Scalar.White, 2);
 
             int y = 80;
-            foreach (var (key, ms) in _stateDetector.RoiTimings)
+            foreach (var (key, ms) in snapshot.RoiTimings)
             {
                 Cv2.PutText(frame, $"  {key}: {ms:F1}ms",
                     new OpenCvSharp.Point(10, y), HersheyFonts.HersheySimplex, 0.5, Scalar.White, 2);
@@ -220,10 +256,10 @@ namespace Garden
             }
         }
 
-        private void DrawState(Mat frame)
+        private void DrawState(Mat frame, StateDetector.DetectionSnapshot snapshot)
         {
-            string currentState = _stateDetector.CurrentState;
-            List<string> nextStates = _stateDetector.NextExpectedStates;
+            string currentState = snapshot.CurrentState;
+            List<string> nextStates = snapshot.NextExpectedStates;
             string nextText = nextStates.Count > 0
                 ? $"Next: {string.Join(", ", nextStates)}"
                 : "Next: none";
@@ -235,8 +271,7 @@ namespace Garden
             }
             else
             {
-                // Calculate confidence from RoiDetectionInfos for this state
-                var stateRois = _stateDetector.RoiDetectionInfos.Where(r => r.StateName == currentState).ToList();
+                var stateRois = snapshot.RoiDetectionInfos.Where(r => r.StateName == currentState).ToList();
                 double confidence = stateRois.Count > 0 ? stateRois.Average(r => r.MinVal) : 0.0;
 
                 Cv2.PutText(frame, $"State: {currentState} ({confidence:F3})", new OpenCvSharp.Point(10, 20),
@@ -246,6 +281,5 @@ namespace Garden
             Cv2.PutText(frame, nextText, new OpenCvSharp.Point(10, 40),
                 HersheyFonts.HersheySimplex, 0.5, Scalar.Cyan, 2);
         }
-
     }
 }

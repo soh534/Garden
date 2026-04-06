@@ -33,6 +33,16 @@ namespace Garden
         private FileSystemWatcher _fileWatcher;
         private readonly object _roiMatsLock = new object();
 
+        public record DetectionSnapshot(
+            string CurrentState,
+            RoiDetectionInfo[] RoiDetectionInfos,
+            List<string> NextExpectedStates,
+            Dictionary<string, double> RoiTimings
+        );
+
+        private volatile DetectionSnapshot _snapshot = new(string.Empty, Array.Empty<RoiDetectionInfo>(), new(), new());
+        public DetectionSnapshot Snapshot => _snapshot;
+
         public RoiDetectionInfo[] RoiDetectionInfos { get; private set; } = Array.Empty<RoiDetectionInfo>();
         public string CurrentState { get; private set; } = string.Empty;
         public List<string> NextExpectedStates { get; set; } = new();
@@ -244,118 +254,131 @@ namespace Garden
         {
             lock (_roiMatsLock)
             {
-                if (_savedRoiData == null)
+                try
                 {
-                    return;
-                }
-
-                string previousState = CurrentState;
-                CurrentState = string.Empty;
-
-                // Allocate array if size changed
-                if (RoiDetectionInfos.Length != _roiMats.Count)
-                {
-                    RoiDetectionInfos = new RoiDetectionInfo[_roiMats.Count];
-                }
-
-                // Early-out 1: check FSM-expected next states first — most likely transitions
-                foreach (string expectedState in NextExpectedStates)
-                {
-                    if (DetectSingleState(frame, expectedState))
+                    if (_savedRoiData == null)
                     {
                         return;
                     }
-                }
 
-                // Early-out 2: re-check the previous state — state rarely changes frame-to-frame
-                if (previousState != string.Empty && DetectSingleState(frame, previousState))
-                {
-                    return;
-                }
+                    string previousState = CurrentState;
+                    CurrentState = string.Empty;
 
-                // Full scan: check all ROIs
-                int index = 0;
-                foreach (KeyValuePair<string, Mat> kvp in _roiMats)
-                {
-                    string roiKey = kvp.Key;
-                    Mat roiMat = kvp.Value;
-
-                    // Parse state name and ROI name from key (format: "stateName/roiName")
-                    string[] parts = roiKey.Split('/');
-                    string stateName = parts[0];
-                    string roiName = parts[1];
-
-                    RoiData roiData = _savedRoiData[stateName].First(r => r.name == roiName);
-                    if (roiData.frameWidth == 0)
+                    // Allocate array if size changed
+                    if (RoiDetectionInfos.Length != _roiMats.Count)
                     {
-                        throw new InvalidOperationException($"ROI '{stateName}/{roiName}' has no frame dimensions recorded. Re-record this ROI.");
-                    }
-                    double scale = (double)frame.Width / roiData.frameWidth;
-
-                    double minVal;
-                    int centerX, centerY;
-                    if (roiData.roiType == "contour" && _contourRefs.TryGetValue(roiKey, out var contourRef))
-                    {
-                        DetectContourRoi(frame, contourRef.contour, contourRef.area, scale, out double combinedScore, out centerX, out centerY);
-                        minVal = combinedScore < ContourDetectionThreshold ? 0.0 : 1.0;
-                    }
-                    else
-                    {
-                        DetectRoi(frame, roiMat, scale, out minVal, out centerX, out centerY);
+                        RoiDetectionInfos = new RoiDetectionInfo[_roiMats.Count];
                     }
 
-                    RoiDetectionInfos[index++] = new RoiDetectionInfo
+                    // Early-out 1: check FSM-expected next states first — most likely transitions
+                    foreach (string expectedState in NextExpectedStates)
                     {
-                        StateName = stateName,
-                        RoiName = roiName,
-                        Center = new Point(centerX, centerY),
-                        MinVal = minVal
-                    };
-                }
-
-                // Find the best matching state — prefer more ROIs (more specific), then lower avgMinVal
-                string bestStateName = string.Empty;
-                double bestAvgMinVal = double.MaxValue;
-                int bestRoiCount = 0;
-                RoiDetectionInfo[] bestStateRois = Array.Empty<RoiDetectionInfo>();
-
-                foreach (var state in _savedRoiData)
-                {
-                    string stateName = state.Key;
-                    List<RoiRecorder.RoiData> expectedRois = state.Value;
-
-                    // Find all detected ROIs for this state
-                    var stateDetectedRois = RoiDetectionInfos.Where(r => r.StateName == stateName).ToList();
-
-                    if (stateDetectedRois.Count == expectedRois.Count)
-                    {
-                        double avgMinVal = stateDetectedRois.Average(r => r.MinVal);
-                        if (avgMinVal < 0.003)
+                        if (DetectSingleState(frame, expectedState))
                         {
-                            int roiCount = expectedRois.Count;
+                            return;
+                        }
+                    }
 
-                            bool moreSpecific = roiCount > bestRoiCount;
-                            bool sameSpecificityButBetter = roiCount == bestRoiCount && avgMinVal < bestAvgMinVal;
+                    // Early-out 2: re-check the previous state — state rarely changes frame-to-frame
+                    if (previousState != string.Empty && DetectSingleState(frame, previousState))
+                    {
+                        return;
+                    }
 
-                            if (moreSpecific || sameSpecificityButBetter)
+                    // Full scan: check all ROIs
+                    int index = 0;
+                    foreach (KeyValuePair<string, Mat> kvp in _roiMats)
+                    {
+                        string roiKey = kvp.Key;
+                        Mat roiMat = kvp.Value;
+
+                        // Parse state name and ROI name from key (format: "stateName/roiName")
+                        string[] parts = roiKey.Split('/');
+                        string stateName = parts[0];
+                        string roiName = parts[1];
+
+                        RoiData roiData = _savedRoiData[stateName].First(r => r.name == roiName);
+                        if (roiData.frameWidth == 0)
+                        {
+                            throw new InvalidOperationException($"ROI '{stateName}/{roiName}' has no frame dimensions recorded. Re-record this ROI.");
+                        }
+                        double scale = (double)frame.Width / roiData.frameWidth;
+
+                        double minVal;
+                        int centerX, centerY;
+                        if (roiData.roiType == "contour" && _contourRefs.TryGetValue(roiKey, out var contourRef))
+                        {
+                            DetectContourRoi(frame, contourRef.contour, contourRef.area, scale, out double combinedScore, out centerX, out centerY);
+                            minVal = combinedScore < ContourDetectionThreshold ? 0.0 : 1.0;
+                        }
+                        else
+                        {
+                            DetectRoi(frame, roiMat, scale, out minVal, out centerX, out centerY);
+                        }
+
+                        RoiDetectionInfos[index++] = new RoiDetectionInfo
+                        {
+                            StateName = stateName,
+                            RoiName = roiName,
+                            Center = new Point(centerX, centerY),
+                            MinVal = minVal
+                        };
+                    }
+
+                    // Find the best matching state — prefer more ROIs (more specific), then lower avgMinVal
+                    string bestStateName = string.Empty;
+                    double bestAvgMinVal = double.MaxValue;
+                    int bestRoiCount = 0;
+                    RoiDetectionInfo[] bestStateRois = Array.Empty<RoiDetectionInfo>();
+
+                    foreach (var state in _savedRoiData)
+                    {
+                        string stateName = state.Key;
+                        List<RoiRecorder.RoiData> expectedRois = state.Value;
+
+                        var requiredExpectedRois = expectedRois.Where(r => !r.optional).ToList();
+                        var stateRequiredDetectedRois = RoiDetectionInfos
+                            .Where(r => r.StateName == stateName && requiredExpectedRois.Any(req => req.name == r.RoiName)).ToList();
+
+                        if (requiredExpectedRois.Count > 0 && stateRequiredDetectedRois.Count == requiredExpectedRois.Count)
+                        {
+                            double avgMinVal = stateRequiredDetectedRois.Average(r => r.MinVal);
+                            if (avgMinVal < 0.003)
                             {
-                                bestStateName = stateName;
-                                bestAvgMinVal = avgMinVal;
-                                bestRoiCount = roiCount;
-                                bestStateRois = stateDetectedRois.ToArray();
+                                int roiCount = requiredExpectedRois.Count;
+
+                                bool moreSpecific = roiCount > bestRoiCount;
+                                bool sameSpecificityButBetter = roiCount == bestRoiCount && avgMinVal < bestAvgMinVal;
+
+                                if (moreSpecific || sameSpecificityButBetter)
+                                {
+                                    bestStateName = stateName;
+                                    bestAvgMinVal = avgMinVal;
+                                    bestRoiCount = roiCount;
+                                    bestStateRois = stateRequiredDetectedRois.ToArray();
+                                }
                             }
                         }
                     }
-                }
 
-                if (bestStateName != string.Empty)
+                    if (bestStateName != string.Empty)
+                    {
+                        CurrentState = bestStateName;
+                        NextExpectedStates = GetNextExpectedStates(CurrentState);
+                    }
+
+                    // Sort by minVal so best match is first
+                    Array.Sort(RoiDetectionInfos, (a, b) => a.MinVal.CompareTo(b.MinVal));
+                }
+                finally
                 {
-                    CurrentState = bestStateName;
-                    NextExpectedStates = GetNextExpectedStates(CurrentState);
+                    _snapshot = new DetectionSnapshot(
+                        CurrentState,
+                        RoiDetectionInfos.ToArray(),
+                        NextExpectedStates.ToList(),
+                        new Dictionary<string, double>(RoiTimings)
+                    );
                 }
-
-                // Sort by minVal so best match is first
-                Array.Sort(RoiDetectionInfos, (a, b) => a.MinVal.CompareTo(b.MinVal));
             }
         }
 
@@ -366,6 +389,8 @@ namespace Garden
             {
                 return false;
             }
+
+            var requiredRois = nextExpectedStateRois.Where(r => !r.optional).ToList();
 
             var sw = Stopwatch.StartNew();
             int index = 0;
@@ -403,15 +428,14 @@ namespace Garden
                 };
             }
 
-            // Find all detected ROIs for this state
-            var nextExpectedStateDetectedRois = RoiDetectionInfos[0..index].ToList();
+            // Check only required ROIs for state match
+            var detectedRequired = RoiDetectionInfos[0..index]
+                .Where(info => requiredRois.Any(r => r.name == info.RoiName)).ToList();
 
-            if (nextExpectedStateDetectedRois.Count == nextExpectedStateRois.Count)
+            if (requiredRois.Count > 0 && detectedRequired.Count == requiredRois.Count)
             {
-                // All ROIs found for this state
-                double avgMinVal = nextExpectedStateDetectedRois.Average(r => r.MinVal);
+                double avgMinVal = detectedRequired.Average(r => r.MinVal);
 
-                // Check if this state is better (most ROIs, then lowest minVal)
                 if (avgMinVal < 0.003)
                 {
                     CurrentState = state;

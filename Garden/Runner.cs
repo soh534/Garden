@@ -87,7 +87,7 @@ namespace Garden
             FrameManager ssManager = new(imageSavePath, bot, mouseRecorder, actionPlayer, roiRecorder, stateDetector, windowPosManager);
 
 
-            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts.Token, proc, commandQueue, actionQueue), cts.Token);
+            var processingTask = Task.Run(() => ssManager.ProcessFrames(cts, proc, commandQueue, actionQueue), cts.Token);
 
             // Wait for processing to finish (cancellation will be triggered by "quit" command
             processingTask.Wait();

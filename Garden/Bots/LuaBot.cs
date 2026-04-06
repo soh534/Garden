@@ -23,6 +23,7 @@ namespace Garden.Bots
             _lua["getState"] = (Func<string>)(() => _stateDetector.CurrentState);
             _lua["queueAction"] = (Action<string>)(actionName => QueueAction(actionName, null));
             _lua["queueActionAt"] = (Action<string, string>)((actionName, roiName) => QueueAction(actionName, roiName));
+            _lua["getRoiScore"] = (Func<string, double>)(roiName => GetRoiScore(roiName));
 
             _lua.DoFile(scriptPath);
         }
@@ -43,6 +44,18 @@ namespace Garden.Bots
             }
 
             _actionPlayer.QueueReplayWithOffset(actionName, roiInfo.Center.X, roiInfo.Center.Y);
+        }
+
+        private double GetRoiScore(string roiName)
+        {
+            var snapshot = _stateDetector.Snapshot;
+            var roiInfo = snapshot.RoiDetectionInfos.FirstOrDefault(r => r.RoiName == roiName);
+            if (roiInfo.RoiName == null)
+            {
+                Logger.Warn($"getRoiScore: ROI '{roiName}' not found");
+                return double.MaxValue;
+            }
+            return roiInfo.MinVal;
         }
 
         public void QueueStateResponse()
