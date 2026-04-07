@@ -59,7 +59,8 @@ namespace Garden
                     switch (verb)
                     {
                         case "record":
-                            _mouseRecorder.StartRecording();
+                            bool isPath = parts.Length > 2 && parts[2].ToLowerInvariant() == "path";
+                            _mouseRecorder.StartRecording(isPath);
                             break;
                         case "reset":
                             _mouseRecorder.ResetRecording();
@@ -115,7 +116,8 @@ namespace Garden
         {
             Console.WriteLine("\nAvailable commands:");
             Console.WriteLine("  image save <filename.png>   - Save screenshot");
-            Console.WriteLine("  action record               - Start recording mouse clicks");
+            Console.WriteLine("  action record               - Start recording mouse clicks (linear)");
+            Console.WriteLine("  action record path          - Start recording mouse path");
             Console.WriteLine("  action reset                - Clear recorded events (stay recording)");
             Console.WriteLine("  action save <name>          - Save recorded clicks & end recording");
             Console.WriteLine("  action replay <filename>    - Replay recorded clicks");

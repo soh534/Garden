@@ -313,7 +313,7 @@ namespace Garden
                         }
                         else
                         {
-                            DetectRoi(frame, roiMat, scale, out minVal, out centerX, out centerY);
+                            DetectRoi(frame, roiMat, scale, roiData.clickOffsetX, roiData.clickOffsetY, out minVal, out centerX, out centerY);
                         }
 
                         RoiDetectionInfos[index++] = new RoiDetectionInfo
@@ -415,7 +415,7 @@ namespace Garden
                 }
                 else
                 {
-                    DetectRoi(frame, roiMat, scale, out minVal, out centerX, out centerY);
+                    DetectRoi(frame, roiMat, scale, roiData.clickOffsetX, roiData.clickOffsetY, out minVal, out centerX, out centerY);
                 }
                 RoiTimings[roiKey] = sw.Elapsed.TotalMilliseconds;
 
@@ -539,7 +539,7 @@ namespace Garden
             }
         }
 
-        private void DetectRoi(Mat frame, Mat roiMat, double scale, out double minVal, out int centerX, out int centerY)
+        private void DetectRoi(Mat frame, Mat roiMat, double scale, int? clickOffsetX, int? clickOffsetY, out double minVal, out int centerX, out int centerY)
         {
             int scaledW = (int)(roiMat.Width * scale);
             int scaledH = (int)(roiMat.Height * scale);
@@ -560,8 +560,16 @@ namespace Garden
                 scaledTemplate.Dispose();
             }
 
-            centerX = minLoc.X + scaledW / 2;
-            centerY = minLoc.Y + scaledH / 2;
+            if (clickOffsetX.HasValue && clickOffsetY.HasValue)
+            {
+                centerX = minLoc.X + (int)(clickOffsetX.Value * scale);
+                centerY = minLoc.Y + (int)(clickOffsetY.Value * scale);
+            }
+            else
+            {
+                centerX = minLoc.X + scaledW / 2;
+                centerY = minLoc.Y + scaledH / 2;
+            }
         }
 
         public void Reload()

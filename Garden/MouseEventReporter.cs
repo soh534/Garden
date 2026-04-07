@@ -13,6 +13,7 @@ namespace Garden
             public int X { get; set; } // Relative to scrcpy window client area
             public int Y { get; set; } // Relative to scrcpy window client area
             public bool IsMouseDown { get; set; } // true for down, false for up
+            public bool IsMouseMove { get; set; } = false;
         }
 
         // Events
@@ -144,7 +145,8 @@ namespace Garden
                                 Timestamp = DateTime.Now,
                                 X = windowX,
                                 Y = windowY,
-                                IsMouseDown = false // Not relevant for move
+                                IsMouseDown = false,
+                                IsMouseMove = true
                             };
                             MouseMoveCallback?.Invoke(this, moveEvent);
                             break;

@@ -19,16 +19,17 @@ namespace Garden
             public int X { get; set; } // Window-relative coordinates
             public int Y { get; set; } // Window-relative coordinates
             public bool IsMouseDown { get; set; } // true for down, false for up
+            public bool IsMouseMove { get; set; } = false;
         }
 
         private readonly string _actionDirectory;
         private readonly ConcurrentQueue<MouseEvent> _actionQueue;
 
         // real time information of executing action
-        private int _downX, _downY;
-        private int _upX, _upY;
-        private DateTime _downTime;
-        private DateTime _upTime;
+        private int _latestX, _latestY;
+        private int _nextX, _nextY;
+        private DateTime _latestTime;
+        private DateTime _nextTime;
         private DateTime _lastActionTime = DateTime.MinValue;
         private DateTime _lastActionTimestamp = DateTime.MinValue;
 
@@ -105,7 +106,8 @@ namespace Garden
                     Timestamp = evt.Timestamp,
                     X = evt.X + offsetX,
                     Y = evt.Y + offsetY,
-                    IsMouseDown = evt.IsMouseDown
+                    IsMouseDown = evt.IsMouseDown,
+                    IsMouseMove = evt.IsMouseMove
                 };
                 _actionQueue.Enqueue(modifiedEvent);
             }
@@ -114,13 +116,13 @@ namespace Garden
         private OpenCvSharp.Point? CalculateCurrentCursorPosition(DateTime currentTime)
         {
             // Calculate interpolation progress (0.0 to 1.0)
-            double totalDuration = (_upTime - _downTime).TotalMilliseconds;
-            double elapsed = (currentTime - _downTime).TotalMilliseconds;
+            double totalDuration = (_nextTime - _latestTime).TotalMilliseconds;
+            double elapsed = (currentTime - _latestTime).TotalMilliseconds;
             double progress = Math.Clamp(elapsed / totalDuration, 0.0, 1.0);
 
             // Interpolate position
-            int currentX = (int)(_downX + (_upX - _downX) * progress);
-            int currentY = (int)(_downY + (_upY - _downY) * progress);
+            int currentX = (int)(_latestX + (_nextX - _latestX) * progress);
+            int currentY = (int)(_latestY + (_nextY - _latestY) * progress);
 
             return new OpenCvSharp.Point(currentX, currentY);
         }
@@ -149,17 +151,17 @@ namespace Garden
                 _lastActionTimestamp = action.Timestamp;
                 actionToExecute = action;
 
-                if (action.IsMouseDown)
+                if (action.IsMouseDown || action.IsMouseMove)
                 {
-                    // Record down and up information for interpolation
-                    if (_actionQueue.TryPeek(out var upAction))
+                    // Record latest/next information for interpolation
+                    if (_actionQueue.TryPeek(out var upcomingAction))
                     {
-                        _downX = action.X;
-                        _downY = action.Y;
-                        _downTime = time;
-                        _upX = upAction.X;
-                        _upY = upAction.Y;
-                        _upTime = time + (upAction.Timestamp - action.Timestamp);
+                        _latestX = action.X;
+                        _latestY = action.Y;
+                        _latestTime = time;
+                        _nextX = upcomingAction.X;
+                        _nextY = upcomingAction.Y;
+                        _nextTime = time + (upcomingAction.Timestamp - action.Timestamp);
                     }
                 }
             }
@@ -175,7 +177,7 @@ namespace Garden
             }
 
             // 3. Click if it's time
-            if (actionToExecute != null)
+            if (actionToExecute != null && !actionToExecute.IsMouseMove)
             {
                 Thread.Sleep(10); // Small delay for movement
                 InputManager.MouseEvent(actionToExecute.IsMouseDown);

@@ -6,6 +6,9 @@ namespace Garden
     {
         private readonly List<MouseEventReporter.MouseEvent> _recordedEvents;
         private readonly string _saveDirectory;
+        private bool _isPathRecording = false;
+        private bool _isMouseDown = false;
+        private DateTime _lastMoveTime = DateTime.MinValue;
 
         public MouseEventRecorder(string saveDirectory) : base(WindowType.Garden)
         {
@@ -13,11 +16,12 @@ namespace Garden
             _saveDirectory = saveDirectory;
         }
 
-        public override void StartRecording()
+        public void StartRecording(bool isPath)
         {
             if (!_isRecording)
             {
                 _recordedEvents.Clear();
+                _isPathRecording = isPath;
                 base.StartRecording();
                 Console.WriteLine("Mouse recording started...");
             }
@@ -32,6 +36,7 @@ namespace Garden
             if (_isRecording)
             {
                 base.StopRecording();
+                _isPathRecording = false;
                 Console.WriteLine($"Mouse recording stopped. Recorded {_recordedEvents.Count} events.");
             }
         }
@@ -80,12 +85,16 @@ namespace Garden
         protected override void OnMouseClick(object? sender, MouseEventReporter.MouseEvent e)
         {
             _recordedEvents.Add(e);
+            _isMouseDown = e.IsMouseDown;
             Console.WriteLine($"{(e.IsMouseDown ? "Mouse down" : "Mouse up")} at ({e.X}, {e.Y})");
         }
 
         protected override void OnMouseMove(object? sender, MouseEventReporter.MouseEvent e)
         {
-            // Ignore mouse move events for action recording
+            if (!_isRecording || !_isMouseDown || !_isPathRecording) return;
+            if ((e.Timestamp - _lastMoveTime).TotalMilliseconds < 16) return;
+            _lastMoveTime = e.Timestamp;
+            _recordedEvents.Add(e);
         }
     }
 }

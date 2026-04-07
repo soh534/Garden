@@ -18,6 +18,8 @@ namespace Garden
             public int frameHeight { get; set; }
             public string roiType { get; set; } = "template";
             public bool optional { get; set; } = false;
+            public int? clickOffsetX { get; set; } = null;
+            public int? clickOffsetY { get; set; } = null;
         }
 
         private readonly string _saveDirectory;
@@ -27,6 +29,7 @@ namespace Garden
         private int _currentX, _currentY;
         private bool _hasStartPoint = false;
         private bool _isWaitingForInput = false;
+        private volatile bool _waitingForClickPoint = false;
         private Mat? _currentFrame = null;
 
         public bool IsRecording => _isRecording;
@@ -90,6 +93,17 @@ namespace Garden
         protected override void OnMouseClick(object? sender, MouseEventReporter.MouseEvent e)
         {
             if (!_isRecording || _currentStateName == null || _currentFrame == null) return;
+
+            if (_waitingForClickPoint)
+            {
+                if (e.IsMouseDown)
+                {
+                    _startX = e.X;
+                    _startY = e.Y;
+                    _hasStartPoint = true;
+                }
+                return;
+            }
 
             if (e.IsMouseDown)
             {
@@ -167,9 +181,32 @@ namespace Garden
                 else { Thread.Sleep(50); }
             }
 
+            bool isOptional = optionalInput.Trim().ToLower() == "y";
+
+            Console.Write("Set click point? (y/n): ");
+            string? clickPointInput = null;
+            while (clickPointInput == null)
+            {
+                if (_commandQueue.TryDequeue(out var input)) { clickPointInput = input; }
+                else { Thread.Sleep(50); }
+            }
+
             _isWaitingForInput = false;
 
-            bool isOptional = optionalInput.Trim().ToLower() == "y";
+            int? clickOffsetX = null;
+            int? clickOffsetY = null;
+            if (clickPointInput.Trim().ToLower() == "y")
+            {
+                Console.WriteLine("Click the target point anywhere on the frame...");
+                _hasStartPoint = false;
+                _waitingForClickPoint = true;
+                while (!_hasStartPoint) { Thread.Sleep(50); }
+                _waitingForClickPoint = false;
+                _hasStartPoint = false;
+                clickOffsetX = _startX - x;
+                clickOffsetY = _startY - y;
+                Console.WriteLine($"Click point set at offset ({clickOffsetX}, {clickOffsetY})");
+            }
 
             string stateDirectory = Path.Combine(_saveDirectory, stateName);
             Directory.CreateDirectory(stateDirectory);
@@ -179,10 +216,10 @@ namespace Garden
             Console.WriteLine($"ROI saved to {filePath} (type: {roiType})");
 
             roiMat.Dispose();
-            SaveRoiData(stateName, roiName, roiType, isOptional, x, y, width, height, frameWidth, frameHeight);
+            SaveRoiData(stateName, roiName, roiType, isOptional, clickOffsetX, clickOffsetY, x, y, width, height, frameWidth, frameHeight);
         }
 
-        private void SaveRoiData(string stateName, string roiName, string roiType, bool isOptional, int x, int y, int width, int height, int frameWidth, int frameHeight)
+        private void SaveRoiData(string stateName, string roiName, string roiType, bool isOptional, int? clickOffsetX, int? clickOffsetY, int x, int y, int width, int height, int frameWidth, int frameHeight)
         {
             string roiDataPath = Path.Combine(_saveDirectory, "roi_metadata.json");
 
@@ -212,6 +249,8 @@ namespace Garden
                 // Overwrite existing ROI
                 existingRoi.roiType = roiType;
                 existingRoi.optional = isOptional;
+                existingRoi.clickOffsetX = clickOffsetX;
+                existingRoi.clickOffsetY = clickOffsetY;
                 existingRoi.x = x;
                 existingRoi.y = y;
                 existingRoi.width = width;
@@ -228,6 +267,8 @@ namespace Garden
                     name = roiName,
                     roiType = roiType,
                     optional = isOptional,
+                    clickOffsetX = clickOffsetX,
+                    clickOffsetY = clickOffsetY,
                     x = x,
                     y = y,
                     width = width,
@@ -330,7 +371,7 @@ namespace Garden
                     Console.WriteLine($"  {state.Key} ({state.Value.Count} ROIs)");
                     foreach (var roi in state.Value)
                     {
-                        Console.WriteLine($"    - {roi.name} [{roi.width}x{roi.height}] ({roi.roiType}){(roi.optional ? " [optional]" : "")}");
+                        Console.WriteLine($"    - {roi.name} [{roi.width}x{roi.height}] ({roi.roiType}){(roi.optional ? " [optional]" : "")}{(roi.clickOffsetX.HasValue ? $" [click@{roi.clickOffsetX},{roi.clickOffsetY}]" : "")}");
                     }
                 }
                 Console.WriteLine("==========================================\n");
