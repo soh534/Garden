@@ -21,6 +21,7 @@ namespace Garden.Bots
             _lua.State.Encoding = System.Text.Encoding.UTF8;
 
             _lua["getState"] = (Func<string>)(() => _stateDetector.CurrentState);
+            _lua["queueWait"] = (Action<int>)(ms => _actionPlayer.QueueWait(ms));
             _lua["getTimeInState"] = (Func<double>)(() => _stateDetector.TimeInState);
             _lua["getOcrInt"] = (Func<string, int>)(key => GetOcrInt(key));
             _lua["queueAction"] = (Action<string>)(actionName => QueueAction(actionName, null));

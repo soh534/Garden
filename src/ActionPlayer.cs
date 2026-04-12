@@ -20,6 +20,8 @@ namespace Garden
             public int Y { get; set; } // Window-relative coordinates
             public bool IsMouseDown { get; set; } // true for down, false for up
             public bool IsMouseMove { get; set; } = false;
+            public bool IsFirstInBatch { get; set; } = false;
+            public int WaitMs { get; set; } = 0;
         }
 
         private readonly string _actionDirectory;
@@ -81,10 +83,16 @@ namespace Garden
             if (events == null) return;
 
             Logger.Info($"Queueing {events.Count} events for replay");
+            events[0].IsFirstInBatch = true;
             foreach (var evt in events)
             {
                 _actionQueue.Enqueue(evt);
             }
+        }
+
+        public void QueueWait(int ms)
+        {
+            _actionQueue.Enqueue(new MouseEvent { WaitMs = ms });
         }
 
         public void QueueReplayWithOffset(string actionName, int roiCenterX, int roiCenterY)
@@ -98,7 +106,6 @@ namespace Garden
 
             Logger.Info($"Queueing {events.Count} events based on ROI center ({roiCenterX}, {roiCenterY}), offset ({offsetX}, {offsetY})");
 
-            // Apply offset to all events and enqueue
             foreach (var evt in events)
             {
                 var modifiedEvent = new MouseEvent
@@ -107,7 +114,8 @@ namespace Garden
                     X = evt.X + offsetX,
                     Y = evt.Y + offsetY,
                     IsMouseDown = evt.IsMouseDown,
-                    IsMouseMove = evt.IsMouseMove
+                    IsMouseMove = evt.IsMouseMove,
+                    IsFirstInBatch = evt == events[0]
                 };
                 _actionQueue.Enqueue(modifiedEvent);
             }
@@ -138,6 +146,14 @@ namespace Garden
                 return;
             }
 
+            // Batch boundary - reset timing so cross-action timestamps don't interfere
+            if (nextAction.IsFirstInBatch)
+            {
+                _currentCursorPosition = null;
+                _lastActionTime = DateTime.MinValue;
+                _lastActionTimestamp = DateTime.MinValue;
+            }
+
             // 1. Pop and record down/up information
             MouseEvent? actionToExecute = null;
             var timeSinceLastAction = time - _lastActionTime;
@@ -147,6 +163,11 @@ namespace Garden
             {
                 _actionQueue.TryDequeue(out var action);
                 Debug.Assert(action != null);
+                if (action.WaitMs > 0)
+                {
+                    Thread.Sleep(action.WaitMs);
+                    return;
+                }
                 _lastActionTime = time;
                 _lastActionTimestamp = action.Timestamp;
                 actionToExecute = action;

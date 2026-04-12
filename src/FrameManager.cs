@@ -38,6 +38,10 @@ namespace Garden
         public void EnableBot() => _isBotEnabled = true;
         public void DisableBot() => _isBotEnabled = false;
 
+        private const int StableFramesRequired = 3;
+        private int _stableFrameCount = 0;
+        private string _lastStableState = string.Empty;
+
         public FrameManager(string imageSavePath, LuaBot bot, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, RoiRecorder roiRecorder, StateDetector stateDetector, WindowPositionManager windowPosManager)
         {
             _imageSavePath = imageSavePath;
@@ -174,9 +178,21 @@ namespace Garden
                     if (actionQueue.IsEmpty)
                     {
                         _stateDetector.DetectState(frame);
-                        if (_isBotEnabled)
+                        string currentState = _stateDetector.CurrentState;
+                        if (currentState == _lastStableState)
+                        {
+                            _stableFrameCount++;
+                        }
+                        else
+                        {
+                            _stableFrameCount = 1;
+                            _lastStableState = currentState;
+                        }
+
+                        if (_isBotEnabled && _stableFrameCount >= StableFramesRequired)
                         {
                             _bot.QueueStateResponse();
+                            _stableFrameCount = 0;
                         }
                     }
                     _msDetect = sw.Elapsed.TotalMilliseconds;
