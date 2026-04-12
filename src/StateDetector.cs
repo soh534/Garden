@@ -33,20 +33,30 @@ namespace Garden
         private FileSystemWatcher _fileWatcher;
         private readonly object _roiMatsLock = new object();
 
+        private readonly OcrReader _ocrReader;
+        private readonly Dictionary<string, int> _ocrReadings = new();
+        private readonly Dictionary<string, Rect> _readAreaRects = new();
+
         public record DetectionSnapshot(
             string CurrentState,
             RoiDetectionInfo[] RoiDetectionInfos,
             List<string> NextExpectedStates,
-            Dictionary<string, double> RoiTimings
+            Dictionary<string, double> RoiTimings,
+            Dictionary<string, int> OcrReadings,
+            Dictionary<string, Rect> ReadAreaRects
         );
 
-        private volatile DetectionSnapshot _snapshot = new(string.Empty, Array.Empty<RoiDetectionInfo>(), new(), new());
+        private volatile DetectionSnapshot _snapshot = new(string.Empty, Array.Empty<RoiDetectionInfo>(), new(), new(), new(), new());
         public DetectionSnapshot Snapshot => _snapshot;
 
         public RoiDetectionInfo[] RoiDetectionInfos { get; private set; } = Array.Empty<RoiDetectionInfo>();
         public string CurrentState { get; private set; } = string.Empty;
+        private string _previousState = string.Empty;
         public List<string> NextExpectedStates { get; set; } = new();
         public Dictionary<string, double> RoiTimings { get; } = new();
+
+        private DateTime _stateEnteredTime = DateTime.MinValue;
+        public double TimeInState => CurrentState == string.Empty ? 0.0 : (DateTime.Now - _stateEnteredTime).TotalSeconds;
 
         public Mat? GetRoiMat(string stateName, string roiName)
         {
@@ -54,8 +64,16 @@ namespace Garden
             return _roiMats.ContainsKey(roiKey) ? _roiMats[roiKey] : null;
         }
 
-        public StateDetector(Fsm fsm, string roiDirectory)
+        public StateDetector(Fsm fsm, string roiDirectory, string debugDir)
         {
+            string tessPrefix = Environment.GetEnvironmentVariable("TESSDATA_PREFIX")
+                ?? throw new InvalidOperationException("TESSDATA_PREFIX environment variable is not set. Run setup.ps1.");
+            string tessDataPath = Path.Combine(tessPrefix, "tessdata");
+            if (!Directory.Exists(tessDataPath))
+            {
+                throw new InvalidOperationException($"tessdata directory not found at {tessDataPath}. Run setup.ps1 to download language data.");
+            }
+            _ocrReader = new OcrReader(tessDataPath, debugDir);
             _fsm = fsm;
             _roiDirectory = roiDirectory;
             LoadRoiData();
@@ -261,7 +279,7 @@ namespace Garden
                         return;
                     }
 
-                    string previousState = CurrentState;
+                    _previousState = CurrentState;
                     CurrentState = string.Empty;
 
                     // Allocate array if size changed
@@ -280,7 +298,7 @@ namespace Garden
                     }
 
                     // Early-out 2: re-check the previous state — state rarely changes frame-to-frame
-                    if (previousState != string.Empty && DetectSingleState(frame, previousState))
+                    if (_previousState != string.Empty && DetectSingleState(frame, _previousState))
                     {
                         return;
                     }
@@ -365,6 +383,13 @@ namespace Garden
                     {
                         CurrentState = bestStateName;
                         NextExpectedStates = GetNextExpectedStates(CurrentState);
+                        if (CurrentState != _previousState)
+                        {
+                            _stateEnteredTime = DateTime.Now;
+                            _ocrReadings.Clear();
+                            _readAreaRects.Clear();
+                        }
+                        ProcessReadAreas(frame, CurrentState);
                     }
 
                     // Sort by minVal so best match is first
@@ -376,7 +401,9 @@ namespace Garden
                         CurrentState,
                         RoiDetectionInfos.ToArray(),
                         NextExpectedStates.ToList(),
-                        new Dictionary<string, double>(RoiTimings)
+                        new Dictionary<string, double>(RoiTimings),
+                        new Dictionary<string, int>(_ocrReadings),
+                        new Dictionary<string, Rect>(_readAreaRects)
                     );
                 }
             }
@@ -438,8 +465,15 @@ namespace Garden
 
                 if (avgMinVal < 0.003)
                 {
+                    bool stateChanged = state != _previousState;
                     CurrentState = state;
                     NextExpectedStates = GetNextExpectedStates(CurrentState);
+                    if (stateChanged)
+                    {
+                        _stateEnteredTime = DateTime.Now;
+                        _ocrReadings.Clear();
+                    }
+                    ProcessReadAreas(frame, state);
                     return true;
                 }
             }
@@ -592,9 +626,54 @@ namespace Garden
             }
         }
 
+        private void ProcessReadAreas(Mat frame, string stateName)
+        {
+            foreach (var roiData in _savedRoiData[stateName])
+            {
+                if (roiData.readAreas.Count == 0) { continue; }
+
+                var detectionInfo = RoiDetectionInfos.FirstOrDefault(r => r.StateName == stateName && r.RoiName == roiData.name);
+                if (detectionInfo.RoiName == null) { continue; }
+
+                double scale = (double)frame.Width / roiData.frameWidth;
+                var roiMat = _roiMats[$"{stateName}/{roiData.name}"];
+                int scaledW = (int)(roiMat.Width * scale);
+                int scaledH = (int)(roiMat.Height * scale);
+
+                int minLocX = roiData.clickOffsetX.HasValue
+                    ? detectionInfo.Center.X - (int)(roiData.clickOffsetX.Value * scale)
+                    : detectionInfo.Center.X - scaledW / 2;
+                int minLocY = roiData.clickOffsetY.HasValue
+                    ? detectionInfo.Center.Y - (int)(roiData.clickOffsetY.Value * scale)
+                    : detectionInfo.Center.Y - scaledH / 2;
+
+                foreach (var readArea in roiData.readAreas)
+                {
+                    int areaX = minLocX + (int)(readArea.x * scale);
+                    int areaY = minLocY + (int)(readArea.y * scale);
+                    int areaW = (int)(readArea.width * scale);
+                    int areaH = (int)(readArea.height * scale);
+
+                    areaX = Math.Max(0, Math.Min(areaX, frame.Width - 1));
+                    areaY = Math.Max(0, Math.Min(areaY, frame.Height - 1));
+                    areaW = Math.Min(areaW, frame.Width - areaX);
+                    areaH = Math.Min(areaH, frame.Height - areaY);
+
+                    if (areaW <= 0 || areaH <= 0) { continue; }
+
+                    string key = $"{roiData.name}/{readArea.name}";
+                    var readRect = new Rect(areaX, areaY, areaW, areaH);
+                    _readAreaRects[key] = readRect;
+                    using Mat readMat = new Mat(frame, readRect);
+                    _ocrReadings[key] = _ocrReader.ReadInt(readMat);
+                }
+            }
+        }
+
         public void Dispose()
         {
             _fileWatcher.Dispose();
+            _ocrReader.Dispose();
             foreach (var roiMat in _roiMats.Values)
             {
                 roiMat.Dispose();

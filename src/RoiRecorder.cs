@@ -20,6 +20,16 @@ namespace Garden
             public bool optional { get; set; } = false;
             public int? clickOffsetX { get; set; } = null;
             public int? clickOffsetY { get; set; } = null;
+            public List<ReadArea> readAreas { get; set; } = new();
+
+            public class ReadArea
+            {
+                public string name { get; set; } = "";
+                public int x { get; set; }
+                public int y { get; set; }
+                public int width { get; set; }
+                public int height { get; set; }
+            }
         }
 
         private readonly string _saveDirectory;
@@ -29,7 +39,9 @@ namespace Garden
         private int _currentX, _currentY;
         private bool _hasStartPoint = false;
         private bool _isWaitingForInput = false;
-        private volatile bool _waitingForClickPoint = false;
+        private enum CaptureMode { None, ClickPoint, BoundingBox }
+        private volatile CaptureMode _captureMode = CaptureMode.None;
+        private volatile bool _captureReady = false;
         private Mat? _currentFrame = null;
 
         public bool IsRecording => _isRecording;
@@ -94,33 +106,20 @@ namespace Garden
         {
             if (!_isRecording || _currentStateName == null || _currentFrame == null) return;
 
-            if (_waitingForClickPoint)
-            {
-                if (e.IsMouseDown)
-                {
-                    _startX = e.X;
-                    _startY = e.Y;
-                    _hasStartPoint = true;
-                }
-                return;
-            }
-
             if (e.IsMouseDown)
             {
-                // Store start position
                 _startX = e.X;
                 _startY = e.Y;
                 _currentX = e.X;
                 _currentY = e.Y;
                 _hasStartPoint = true;
-                Console.WriteLine($"ROI start point: ({_startX}, {_startY})");
+                if (_captureMode == CaptureMode.ClickPoint) { _captureReady = true; }
+                else if (_captureMode == CaptureMode.None) { Console.WriteLine($"ROI start point: ({_startX}, {_startY})"); }
             }
-            else if (_hasStartPoint)
+            else if (_hasStartPoint && _captureMode != CaptureMode.ClickPoint)
             {
-                // Mouse up - calculate ROI rectangle
                 int endX = e.X;
                 int endY = e.Y;
-
                 int x = Math.Min(_startX, endX);
                 int y = Math.Min(_startY, endY);
                 int width = Math.Abs(endX - _startX);
@@ -128,19 +127,28 @@ namespace Garden
 
                 if (width > 0 && height > 0)
                 {
-                    // Extract ROI
-                    Rect roi = new Rect(x, y, width, height);
-                    Mat roiMat = new Mat(_currentFrame, roi);
-
-                    // Process on background thread to avoid blocking hook
-                    int frameWidth = _currentFrame.Width;
-                    int frameHeight = _currentFrame.Height;
-                    _ = Task.Run(() => PromptAndSaveRoi(roiMat, _currentStateName, x, y, width, height, frameWidth, frameHeight));
+                    if (_captureMode == CaptureMode.BoundingBox) { _currentX = endX; _currentY = endY; _captureReady = true; }
+                    else
+                    {
+                        Rect roi = new Rect(x, y, width, height);
+                        Mat roiMat = new Mat(_currentFrame, roi);
+                        int frameWidth = _currentFrame.Width;
+                        int frameHeight = _currentFrame.Height;
+                        _ = Task.Run(() => PromptAndSaveRoi(roiMat, _currentStateName, x, y, width, height, frameWidth, frameHeight));
+                    }
                 }
-
-                // Reset for next ROI (stay in recording mode)
                 _hasStartPoint = false;
             }
+        }
+
+        private (int startX, int startY, int endX, int endY) WaitForCapture(CaptureMode mode)
+        {
+            _hasStartPoint = false;
+            _captureReady = false;
+            _captureMode = mode;
+            while (!_captureReady) { Thread.Sleep(50); }
+            _captureMode = CaptureMode.None;
+            return (_startX, _startY, _currentX, _currentY);
         }
 
         private void PromptAndSaveRoi(Mat roiMat, string stateName, int x, int y, int width, int height, int frameWidth, int frameHeight)
@@ -198,15 +206,67 @@ namespace Garden
             if (clickPointInput.Trim().ToLower() == "y")
             {
                 Console.WriteLine("Click the target point anywhere on the frame...");
-                _hasStartPoint = false;
-                _waitingForClickPoint = true;
-                while (!_hasStartPoint) { Thread.Sleep(50); }
-                _waitingForClickPoint = false;
-                _hasStartPoint = false;
-                clickOffsetX = _startX - x;
-                clickOffsetY = _startY - y;
+                var (sx, sy, _, _) = WaitForCapture(CaptureMode.ClickPoint);
+                clickOffsetX = sx - x;
+                clickOffsetY = sy - y;
                 Console.WriteLine($"Click point set at offset ({clickOffsetX}, {clickOffsetY})");
             }
+
+            var readAreas = new List<RoiData.ReadArea>();
+            _isWaitingForInput = true;
+            Console.Write("Add read area? (y/n): ");
+            string? addReadAreaInput = null;
+            while (addReadAreaInput == null)
+            {
+                if (_commandQueue.TryDequeue(out var input)) { addReadAreaInput = input; }
+                else { Thread.Sleep(50); }
+            }
+
+            while (addReadAreaInput?.Trim().ToLower() == "y")
+            {
+                _isWaitingForInput = false;
+                Console.WriteLine("Draw read area on frame (drag to select)...");
+                var (raStartX, raStartY, raEndX, raEndY) = WaitForCapture(CaptureMode.BoundingBox);
+                int raX = Math.Min(raStartX, raEndX) - x;
+                int raY = Math.Min(raStartY, raEndY) - y;
+                int raW = Math.Abs(raEndX - raStartX);
+                int raH = Math.Abs(raEndY - raStartY);
+
+                _isWaitingForInput = true;
+                Console.Write("Enter read area name: ");
+                string? readAreaName = null;
+                while (readAreaName == null)
+                {
+                    if (_commandQueue.TryDequeue(out var input)) { readAreaName = input; }
+                    else { Thread.Sleep(50); }
+                }
+
+                if (!string.IsNullOrWhiteSpace(readAreaName))
+                {
+                    readAreas.Add(new RoiData.ReadArea
+                    {
+                        name = readAreaName,
+                        x = raX,
+                        y = raY,
+                        width = raW,
+                        height = raH
+                    });
+                    Console.WriteLine($"Read area '{readAreaName}' added at offset ({raX}, {raY}) [{raW}x{raH}]");
+                }
+                else
+                {
+                    Console.WriteLine("Read area discarded (empty name).");
+                }
+
+                Console.Write("Add another read area? (y/n): ");
+                addReadAreaInput = null;
+                while (addReadAreaInput == null)
+                {
+                    if (_commandQueue.TryDequeue(out var input)) { addReadAreaInput = input; }
+                    else { Thread.Sleep(50); }
+                }
+            }
+            _isWaitingForInput = false;
 
             string stateDirectory = Path.Combine(_saveDirectory, stateName);
             Directory.CreateDirectory(stateDirectory);
@@ -216,10 +276,10 @@ namespace Garden
             Console.WriteLine($"ROI saved to {filePath} (type: {roiType})");
 
             roiMat.Dispose();
-            SaveRoiData(stateName, roiName, roiType, isOptional, clickOffsetX, clickOffsetY, x, y, width, height, frameWidth, frameHeight);
+            SaveRoiData(stateName, roiName, roiType, isOptional, clickOffsetX, clickOffsetY, readAreas, x, y, width, height, frameWidth, frameHeight);
         }
 
-        private void SaveRoiData(string stateName, string roiName, string roiType, bool isOptional, int? clickOffsetX, int? clickOffsetY, int x, int y, int width, int height, int frameWidth, int frameHeight)
+        private void SaveRoiData(string stateName, string roiName, string roiType, bool isOptional, int? clickOffsetX, int? clickOffsetY, List<RoiData.ReadArea> readAreas, int x, int y, int width, int height, int frameWidth, int frameHeight)
         {
             string roiDataPath = Path.Combine(_saveDirectory, "roi_metadata.json");
 
@@ -251,6 +311,7 @@ namespace Garden
                 existingRoi.optional = isOptional;
                 existingRoi.clickOffsetX = clickOffsetX;
                 existingRoi.clickOffsetY = clickOffsetY;
+                existingRoi.readAreas = readAreas;
                 existingRoi.x = x;
                 existingRoi.y = y;
                 existingRoi.width = width;
@@ -269,6 +330,7 @@ namespace Garden
                     optional = isOptional,
                     clickOffsetX = clickOffsetX,
                     clickOffsetY = clickOffsetY,
+                    readAreas = readAreas,
                     x = x,
                     y = y,
                     width = width,

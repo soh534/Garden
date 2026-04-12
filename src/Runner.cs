@@ -81,7 +81,7 @@ namespace Garden
             ActionPlayer actionPlayer = new(actionSavePath, actionQueue);
             RoiRecorder roiRecorder = new(roiSavePath, commandQueue);
             Fsm fsm = new(fsmPath);
-            StateDetector stateDetector = new(fsm, roiSavePath);
+            StateDetector stateDetector = new(fsm, roiSavePath, imageSavePath);
 
             LuaBot bot = new(luaScriptPath, stateDetector, actionPlayer);
             FrameManager ssManager = new(imageSavePath, bot, mouseRecorder, actionPlayer, roiRecorder, stateDetector, windowPosManager);

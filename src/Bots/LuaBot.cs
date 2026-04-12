@@ -21,6 +21,8 @@ namespace Garden.Bots
             _lua.State.Encoding = System.Text.Encoding.UTF8;
 
             _lua["getState"] = (Func<string>)(() => _stateDetector.CurrentState);
+            _lua["getTimeInState"] = (Func<double>)(() => _stateDetector.TimeInState);
+            _lua["getOcrInt"] = (Func<string, int>)(key => GetOcrInt(key));
             _lua["queueAction"] = (Action<string>)(actionName => QueueAction(actionName, null));
             _lua["queueActionAt"] = (Action<string, string>)((actionName, roiName) => QueueAction(actionName, roiName));
             _lua["getRoiScore"] = (Func<string, double>)(roiName => GetRoiScore(roiName));
@@ -44,6 +46,17 @@ namespace Garden.Bots
             }
 
             _actionPlayer.QueueReplayWithOffset(actionName, roiInfo.Center.X, roiInfo.Center.Y);
+        }
+
+        private int GetOcrInt(string key)
+        {
+            var snapshot = _stateDetector.Snapshot;
+            if (snapshot.OcrReadings.TryGetValue(key, out int value))
+            {
+                return value;
+            }
+            Logger.Warn($"getOcrInt: key '{key}' not found in OCR readings");
+            return -1;
         }
 
         private double GetRoiScore(string roiName)

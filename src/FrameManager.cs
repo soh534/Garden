@@ -125,6 +125,7 @@ namespace Garden
                     {
                         DrawAction(frame);
                         DrawDetectedRois(frame, snapshot);
+                        DrawReadAreas(frame, snapshot);
                         DrawState(frame, snapshot);
                         DrawProfiler(frame, snapshot);
                     }
@@ -170,10 +171,13 @@ namespace Garden
                 try
                 {
                     sw.Restart();
-                    _stateDetector.DetectState(frame);
-                    if (_isBotEnabled && actionQueue.IsEmpty)
+                    if (actionQueue.IsEmpty)
                     {
-                        _bot.QueueStateResponse();
+                        _stateDetector.DetectState(frame);
+                        if (_isBotEnabled)
+                        {
+                            _bot.QueueStateResponse();
+                        }
                     }
                     _msDetect = sw.Elapsed.TotalMilliseconds;
                 }
@@ -208,6 +212,16 @@ namespace Garden
             if (roi.HasValue)
             {
                 Cv2.Rectangle(frame, roi.Value, Scalar.Green, 2);
+            }
+        }
+
+        private void DrawReadAreas(Mat frame, StateDetector.DetectionSnapshot snapshot)
+        {
+            foreach (var (key, rect) in snapshot.ReadAreaRects)
+            {
+                Cv2.Rectangle(frame, rect, Scalar.Cyan, 2);
+                Cv2.PutText(frame, key, new OpenCvSharp.Point(rect.X, rect.Y - 5),
+                    HersheyFonts.HersheySimplex, 0.4, Scalar.Cyan, 1);
             }
         }
 
@@ -250,8 +264,17 @@ namespace Garden
             int y = 80;
             foreach (var (key, ms) in snapshot.RoiTimings)
             {
-                Cv2.PutText(frame, $"  {key}: {ms:F1}ms",
-                    new OpenCvSharp.Point(10, y), HersheyFonts.HersheySimplex, 0.5, Scalar.White, 2);
+                var roi = snapshot.RoiDetectionInfos.FirstOrDefault(r => $"{r.StateName}/{r.RoiName}" == key);
+                Scalar roiColor = roi.MinVal < 0.003 ? Scalar.LimeGreen : Scalar.OrangeRed;
+                Cv2.PutText(frame, $"  {key}: {ms:F1}ms score:{roi.MinVal:F4}",
+                    new OpenCvSharp.Point(10, y), HersheyFonts.HersheySimplex, 0.5, roiColor, 2);
+                y += 20;
+            }
+
+            foreach (var (key, val) in snapshot.OcrReadings)
+            {
+                Cv2.PutText(frame, $"  ocr {key}: {val}",
+                    new OpenCvSharp.Point(10, y), HersheyFonts.HersheySimplex, 0.5, Scalar.Cyan, 2);
                 y += 20;
             }
         }

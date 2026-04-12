@@ -40,4 +40,33 @@ if (-not $env:GARDEN_DATA) {
     Write-Host "GARDEN_DATA already set to: $env:GARDEN_DATA"
 }
 
-Write-Host "Setup complete. Run: cd Garden && dotnet run"
+# 7. TESSDATA_PREFIX
+if (-not $env:TESSDATA_PREFIX) {
+    $tessPrefix = Read-Host "Enter the full path for TESSDATA_PREFIX (tessdata files will be stored in <path>\tessdata\)"
+    [System.Environment]::SetEnvironmentVariable("TESSDATA_PREFIX", $tessPrefix, "User")
+    $env:TESSDATA_PREFIX = $tessPrefix
+    Write-Host "TESSDATA_PREFIX set."
+} else {
+    Write-Host "TESSDATA_PREFIX already set to: $env:TESSDATA_PREFIX"
+}
+
+# 8. Download Tesseract language data
+$tessDataDir = Join-Path $env:TESSDATA_PREFIX "tessdata"
+if (-not (Test-Path $tessDataDir)) { New-Item -ItemType Directory -Path $tessDataDir | Out-Null }
+
+$languages = @{
+    "eng" = "https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata"
+    "jpn" = "https://github.com/tesseract-ocr/tessdata/raw/main/jpn.traineddata"
+}
+foreach ($lang in $languages.GetEnumerator()) {
+    $outFile = Join-Path $tessDataDir "$($lang.Key).traineddata"
+    if (-not (Test-Path $outFile)) {
+        Write-Host "Downloading $($lang.Key).traineddata..."
+        Invoke-WebRequest -Uri $lang.Value -OutFile $outFile
+        Write-Host "Done."
+    } else {
+        Write-Host "$($lang.Key).traineddata already present."
+    }
+}
+
+Write-Host "Setup complete. Run: cd src && dotnet run"
