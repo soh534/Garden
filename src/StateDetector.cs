@@ -10,11 +10,12 @@ namespace Garden
 {
     public class StateDetector
     {
-        public struct RoiDetectionInfo
+        public struct DetectedRoiInfo
         {
             public string StateName;
             public string RoiName;
             public Point Center;
+            public Point ClickPoint;
             public double MinVal;
         }
 
@@ -39,17 +40,17 @@ namespace Garden
 
         public record DetectionSnapshot(
             string CurrentState,
-            RoiDetectionInfo[] RoiDetectionInfos,
+            DetectedRoiInfo[] RoiDetectionInfos,
             List<string> NextExpectedStates,
             Dictionary<string, double> RoiTimings,
             Dictionary<string, int> OcrReadings,
             Dictionary<string, Rect> ReadAreaRects
         );
 
-        private volatile DetectionSnapshot _snapshot = new(string.Empty, Array.Empty<RoiDetectionInfo>(), new(), new(), new(), new());
+        private volatile DetectionSnapshot _snapshot = new(string.Empty, Array.Empty<DetectedRoiInfo>(), new(), new(), new(), new());
         public DetectionSnapshot Snapshot => _snapshot;
 
-        public RoiDetectionInfo[] RoiDetectionInfos { get; private set; } = Array.Empty<RoiDetectionInfo>();
+        public DetectedRoiInfo[] DetectedRoiInfos { get; private set; } = Array.Empty<DetectedRoiInfo>();
         public string CurrentState { get; private set; } = string.Empty;
         private string _previousState = string.Empty;
         public List<string> NextExpectedStates { get; set; } = new();
@@ -283,9 +284,9 @@ namespace Garden
                     CurrentState = string.Empty;
 
                     // Allocate array if size changed
-                    if (RoiDetectionInfos.Length != _roiMats.Count)
+                    if (DetectedRoiInfos.Length != _roiMats.Count)
                     {
-                        RoiDetectionInfos = new RoiDetectionInfo[_roiMats.Count];
+                        DetectedRoiInfos = new DetectedRoiInfo[_roiMats.Count];
                     }
 
                     // Early-out 1: check FSM-expected next states first — most likely transitions
@@ -324,21 +325,27 @@ namespace Garden
 
                         double minVal;
                         int centerX, centerY;
+                        int clickX, clickY;
                         if (roiData.roiType == "contour" && _contourRefs.TryGetValue(roiKey, out var contourRef))
                         {
                             DetectContourRoi(frame, contourRef.contour, contourRef.area, scale, out double combinedScore, out centerX, out centerY);
                             minVal = combinedScore < ContourDetectionThreshold ? 0.0 : 1.0;
+                            clickX = centerX;
+                            clickY = centerY;
                         }
                         else
                         {
-                            DetectRoi(frame, roiMat, scale, roiData.clickOffsetX, roiData.clickOffsetY, out minVal, out centerX, out centerY);
+                            DetectRoi(frame, roiMat, scale, out minVal, out int minLocX, out int minLocY, out centerX, out centerY);
+                            clickX = roiData.clickOffsetX.HasValue ? minLocX + (int)(roiData.clickOffsetX.Value * scale) : centerX;
+                            clickY = roiData.clickOffsetY.HasValue ? minLocY + (int)(roiData.clickOffsetY.Value * scale) : centerY;
                         }
 
-                        RoiDetectionInfos[index++] = new RoiDetectionInfo
+                        DetectedRoiInfos[index++] = new DetectedRoiInfo
                         {
                             StateName = stateName,
                             RoiName = roiName,
                             Center = new Point(centerX, centerY),
+                            ClickPoint = new Point(clickX, clickY),
                             MinVal = minVal
                         };
                     }
@@ -347,7 +354,7 @@ namespace Garden
                     string bestStateName = string.Empty;
                     double bestAvgMinVal = double.MaxValue;
                     int bestRoiCount = 0;
-                    RoiDetectionInfo[] bestStateRois = Array.Empty<RoiDetectionInfo>();
+                    DetectedRoiInfo[] bestStateRois = Array.Empty<DetectedRoiInfo>();
 
                     foreach (var state in _savedRoiData)
                     {
@@ -355,7 +362,7 @@ namespace Garden
                         List<RoiRecorder.RoiData> expectedRois = state.Value;
 
                         var requiredExpectedRois = expectedRois.Where(r => !r.optional).ToList();
-                        var stateRequiredDetectedRois = RoiDetectionInfos
+                        var stateRequiredDetectedRois = DetectedRoiInfos
                             .Where(r => r.StateName == stateName && requiredExpectedRois.Any(req => req.name == r.RoiName)).ToList();
 
                         if (requiredExpectedRois.Count > 0 && stateRequiredDetectedRois.Count == requiredExpectedRois.Count)
@@ -393,13 +400,13 @@ namespace Garden
                     }
 
                     // Sort by minVal so best match is first
-                    Array.Sort(RoiDetectionInfos, (a, b) => a.MinVal.CompareTo(b.MinVal));
+                    Array.Sort(DetectedRoiInfos, (a, b) => a.MinVal.CompareTo(b.MinVal));
                 }
                 finally
                 {
                     _snapshot = new DetectionSnapshot(
                         CurrentState,
-                        RoiDetectionInfos.ToArray(),
+                        DetectedRoiInfos.ToArray(),
                         NextExpectedStates.ToList(),
                         new Dictionary<string, double>(RoiTimings),
                         new Dictionary<string, int>(_ocrReadings),
@@ -433,30 +440,36 @@ namespace Garden
 
                 double minVal;
                 int centerX, centerY;
+                int clickX, clickY;
                 string roiKey = $"{state}/{roiData.name}";
                 sw.Restart();
                 if (roiData.roiType == "contour" && _contourRefs.TryGetValue(roiKey, out var contourRef))
                 {
                     DetectContourRoi(frame, contourRef.contour, contourRef.area, scale, out double combinedScore, out centerX, out centerY);
                     minVal = combinedScore < ContourDetectionThreshold ? 0.0 : 1.0;
+                    clickX = centerX;
+                    clickY = centerY;
                 }
                 else
                 {
-                    DetectRoi(frame, roiMat, scale, roiData.clickOffsetX, roiData.clickOffsetY, out minVal, out centerX, out centerY);
+                    DetectRoi(frame, roiMat, scale, out minVal, out int minLocX, out int minLocY, out centerX, out centerY);
+                    clickX = roiData.clickOffsetX.HasValue ? minLocX + (int)(roiData.clickOffsetX.Value * scale) : centerX;
+                    clickY = roiData.clickOffsetY.HasValue ? minLocY + (int)(roiData.clickOffsetY.Value * scale) : centerY;
                 }
                 RoiTimings[roiKey] = sw.Elapsed.TotalMilliseconds;
 
-                RoiDetectionInfos[index++] = new RoiDetectionInfo
+                DetectedRoiInfos[index++] = new DetectedRoiInfo
                 {
                     StateName = state,
                     RoiName = roiData.name,
                     Center = new Point(centerX, centerY),
+                    ClickPoint = new Point(clickX, clickY),
                     MinVal = minVal
                 };
             }
 
             // Check only required ROIs for state match
-            var detectedRequired = RoiDetectionInfos[0..index]
+            var detectedRequired = DetectedRoiInfos[0..index]
                 .Where(info => requiredRois.Any(r => r.name == info.RoiName)).ToList();
 
             if (requiredRois.Count > 0 && detectedRequired.Count == requiredRois.Count)
@@ -573,7 +586,7 @@ namespace Garden
             }
         }
 
-        private void DetectRoi(Mat frame, Mat roiMat, double scale, int? clickOffsetX, int? clickOffsetY, out double minVal, out int centerX, out int centerY)
+        private void DetectRoi(Mat frame, Mat roiMat, double scale, out double minVal, out int minLocX, out int minLocY, out int centerX, out int centerY)
         {
             int scaledW = (int)(roiMat.Width * scale);
             int scaledH = (int)(roiMat.Height * scale);
@@ -594,16 +607,10 @@ namespace Garden
                 scaledTemplate.Dispose();
             }
 
-            if (clickOffsetX.HasValue && clickOffsetY.HasValue)
-            {
-                centerX = minLoc.X + (int)(clickOffsetX.Value * scale);
-                centerY = minLoc.Y + (int)(clickOffsetY.Value * scale);
-            }
-            else
-            {
-                centerX = minLoc.X + scaledW / 2;
-                centerY = minLoc.Y + scaledH / 2;
-            }
+            minLocX = minLoc.X;
+            minLocY = minLoc.Y;
+            centerX = minLoc.X + scaledW / 2;
+            centerY = minLoc.Y + scaledH / 2;
         }
 
         public void Reload()
@@ -632,7 +639,7 @@ namespace Garden
             {
                 if (roiData.readAreas.Count == 0) { continue; }
 
-                var detectionInfo = RoiDetectionInfos.FirstOrDefault(r => r.StateName == stateName && r.RoiName == roiData.name);
+                var detectionInfo = DetectedRoiInfos.FirstOrDefault(r => r.StateName == stateName && r.RoiName == roiData.name);
                 if (detectionInfo.RoiName == null) { continue; }
 
                 double scale = (double)frame.Width / roiData.frameWidth;
@@ -640,12 +647,8 @@ namespace Garden
                 int scaledW = (int)(roiMat.Width * scale);
                 int scaledH = (int)(roiMat.Height * scale);
 
-                int minLocX = roiData.clickOffsetX.HasValue
-                    ? detectionInfo.Center.X - (int)(roiData.clickOffsetX.Value * scale)
-                    : detectionInfo.Center.X - scaledW / 2;
-                int minLocY = roiData.clickOffsetY.HasValue
-                    ? detectionInfo.Center.Y - (int)(roiData.clickOffsetY.Value * scale)
-                    : detectionInfo.Center.Y - scaledH / 2;
+                int minLocX = detectionInfo.Center.X - scaledW / 2;
+                int minLocY = detectionInfo.Center.Y - scaledH / 2;
 
                 foreach (var readArea in roiData.readAreas)
                 {

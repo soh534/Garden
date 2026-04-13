@@ -137,37 +137,38 @@ namespace Garden
 
         public void StepAction(DateTime time)
         {
-            // Queue is empty - clear visualization and reset timing
-            if (!_actionQueue.TryPeek(out var nextAction))
+            void ResetTiming()
             {
                 _currentCursorPosition = null;
                 _lastActionTime = DateTime.MinValue;
                 _lastActionTimestamp = DateTime.MinValue;
+            }
+
+            // Queue is empty - clear visualization and reset timing
+            if (!_actionQueue.TryPeek(out var nextAction))
+            {
+                ResetTiming();
                 return;
             }
 
             // Batch boundary - reset timing so cross-action timestamps don't interfere
             if (nextAction.IsFirstInBatch)
             {
-                _currentCursorPosition = null;
-                _lastActionTime = DateTime.MinValue;
-                _lastActionTimestamp = DateTime.MinValue;
+                ResetTiming();
             }
 
             // 1. Pop and record down/up information
             MouseEvent? actionToExecute = null;
             var timeSinceLastAction = time - _lastActionTime;
-            var requiredDelay = nextAction.Timestamp - _lastActionTimestamp;
+            var requiredDelay = nextAction.WaitMs > 0
+                ? TimeSpan.FromMilliseconds(nextAction.WaitMs)
+                : nextAction.Timestamp - _lastActionTimestamp;
 
             if (timeSinceLastAction >= requiredDelay)
             {
                 _actionQueue.TryDequeue(out var action);
                 Debug.Assert(action != null);
-                if (action.WaitMs > 0)
-                {
-                    Thread.Sleep(action.WaitMs);
-                    return;
-                }
+                if (action.WaitMs > 0) { return; }
                 _lastActionTime = time;
                 _lastActionTimestamp = action.Timestamp;
                 actionToExecute = action;
@@ -207,9 +208,7 @@ namespace Garden
             // Clear queue after having emptied
             if (_actionQueue.IsEmpty)
             {
-                _currentCursorPosition = null;
-                _lastActionTime = DateTime.MinValue;
-                _lastActionTimestamp = DateTime.MinValue;
+                ResetTiming();
                 return;
             }
         }

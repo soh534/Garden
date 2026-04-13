@@ -39,14 +39,14 @@ namespace Garden.Bots
                 return;
             }
 
-            var roiInfo = _stateDetector.RoiDetectionInfos.FirstOrDefault(r => r.RoiName == roiName);
+            var roiInfo = _stateDetector.DetectedRoiInfos.FirstOrDefault(r => r.RoiName == roiName);
             if (roiInfo.RoiName == null)
             {
                 Logger.Error($"ROI '{roiName}' not found in detection results");
                 return;
             }
 
-            _actionPlayer.QueueReplayWithOffset(actionName, roiInfo.Center.X, roiInfo.Center.Y);
+            _actionPlayer.QueueReplayWithOffset(actionName, roiInfo.ClickPoint.X, roiInfo.ClickPoint.Y);
         }
 
         private int GetOcrInt(string key)
