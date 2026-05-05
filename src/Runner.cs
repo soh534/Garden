@@ -30,7 +30,6 @@ namespace Garden
             string imageSavePath  = Path.Combine(dataRoot, "images");
             string actionSavePath = Path.Combine(dataRoot, "actions");
             string roiSavePath    = Path.Combine(dataRoot, "rois");
-            string fsmPath        = Path.Combine(dataRoot, "fsm.json");
             string luaScriptPath  = Path.Combine(dataRoot, "gardenbot.lua");
 
             if (!ScrcpyManager.IsAvailable())
@@ -80,11 +79,10 @@ namespace Garden
             MouseEventRecorder mouseRecorder = new(actionSavePath);
             ActionPlayer actionPlayer = new(actionSavePath, actionQueue);
             RoiRecorder roiRecorder = new(roiSavePath, commandQueue);
-            Fsm fsm = new(fsmPath);
-            StateDetector stateDetector = new(fsm, roiSavePath, imageSavePath);
+            RoiDetector roiDetector = new(roiSavePath, imageSavePath);
 
-            LuaBot bot = new(luaScriptPath, stateDetector, actionPlayer);
-            FrameManager ssManager = new(imageSavePath, bot, mouseRecorder, actionPlayer, roiRecorder, stateDetector, windowPosManager);
+            LuaBot bot = new(luaScriptPath, roiDetector, actionPlayer);
+            FrameManager ssManager = new(imageSavePath, bot, mouseRecorder, actionPlayer, roiRecorder, roiDetector, windowPosManager);
 
 
             var processingTask = Task.Run(() => ssManager.ProcessFrames(cts, proc, commandQueue, actionQueue), cts.Token);

@@ -78,7 +78,7 @@ namespace Garden
                     switch (verb)
                     {
                         case "record":
-                            HandleRecordRoiCommand(command);
+                            _roiRecorder.StartRecording();
                             break;
                         case "stop":
                             _roiRecorder.StopRecording();
@@ -87,7 +87,7 @@ namespace Garden
                             HandleRemoveRoiCommand(command);
                             break;
                         case "list":
-                            _roiRecorder.ListStates();
+                            _roiRecorder.ListRois();
                             break;
                     }
                     return true;
@@ -121,10 +121,10 @@ namespace Garden
             Console.WriteLine("  action reset                - Clear recorded events (stay recording)");
             Console.WriteLine("  action save <name>          - Save recorded clicks & end recording");
             Console.WriteLine("  action replay <filename>    - Replay recorded clicks");
-            Console.WriteLine("  roi record <state_name>     - Start recording ROIs for a state");
+            Console.WriteLine("  roi record                  - Start recording an ROI");
             Console.WriteLine("  roi stop                    - Stop ROI recording");
-            Console.WriteLine("  roi list                    - List all ROI states");
-            Console.WriteLine("  roi remove <state_name>     - Remove ROI state and its files");
+            Console.WriteLine("  roi list                    - List all ROIs");
+            Console.WriteLine("  roi remove <roi_name>       - Remove an ROI and its image");
             Console.WriteLine("  bot start                   - Start the bot automation");
             Console.WriteLine("  bot stop                    - Stop the bot automation");
             Console.WriteLine("  help                        - Show this help message");
@@ -182,31 +182,17 @@ namespace Garden
             }
         }
 
-        private void HandleRecordRoiCommand(string command)
-        {
-            var parts = command.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 3)
-            {
-                string stateName = parts[2].Trim();
-                _roiRecorder.StartRecording(stateName);
-            }
-            else
-            {
-                Logger.Info("Usage: roi record <state_name>");
-            }
-        }
-
         private void HandleRemoveRoiCommand(string command)
         {
             var parts = command.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length == 3)
             {
-                string stateName = parts[2].Trim();
-                _roiRecorder.RemoveState(stateName);
+                string roiName = parts[2].Trim();
+                _roiRecorder.RemoveRoi(roiName);
             }
             else
             {
-                Logger.Info("Usage: roi remove <state_name>");
+                Logger.Info("Usage: roi remove <roi_name>");
             }
         }
     }

@@ -1,7 +1,7 @@
 using OpenCvSharp;
 using System.Collections.Concurrent;
 using System.Text.Json;
-using SavedRoiData = System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<Garden.RoiRecorder.RoiData>>;
+using SavedRoiData = System.Collections.Generic.Dictionary<string, Garden.RoiRecorder.RoiData>;
 
 namespace Garden
 {
@@ -9,7 +9,6 @@ namespace Garden
     {
         public class RoiData
         {
-            public string name { get; set; } = "";
             public int x { get; set; }
             public int y { get; set; }
             public int width { get; set; }
@@ -17,7 +16,6 @@ namespace Garden
             public int frameWidth { get; set; }
             public int frameHeight { get; set; }
             public string roiType { get; set; } = "template";
-            public bool optional { get; set; } = false;
             public int? clickOffsetX { get; set; } = null;
             public int? clickOffsetY { get; set; } = null;
             public List<ReadArea> readAreas { get; set; } = new();
@@ -34,7 +32,6 @@ namespace Garden
 
         private readonly string _saveDirectory;
         private readonly ConcurrentQueue<string> _commandQueue;
-        private string? _currentStateName = null;
         private int _startX, _startY;
         private int _currentX, _currentY;
         private bool _hasStartPoint = false;
@@ -52,14 +49,13 @@ namespace Garden
             _commandQueue = commandQueue;
         }
 
-        public void StartRecording(string stateName)
+        public void StartRecording()
         {
             if (!_isRecording)
             {
-                _currentStateName = stateName;
                 _hasStartPoint = false;
                 base.StartRecording();
-                Console.WriteLine($"ROI recording started for state: {stateName}");
+                Console.WriteLine("ROI recording started.");
             }
             else
             {
@@ -72,7 +68,6 @@ namespace Garden
             if (_isRecording)
             {
                 base.StopRecording();
-                _currentStateName = null;
                 _hasStartPoint = false;
                 Console.WriteLine("ROI recording stopped.");
             }
@@ -104,7 +99,7 @@ namespace Garden
 
         protected override void OnMouseClick(object? sender, MouseEventReporter.MouseEvent e)
         {
-            if (!_isRecording || _currentStateName == null || _currentFrame == null) return;
+            if (!_isRecording || _currentFrame == null) return;
 
             if (e.IsMouseDown)
             {
@@ -134,7 +129,7 @@ namespace Garden
                         Mat roiMat = new Mat(_currentFrame, roi);
                         int frameWidth = _currentFrame.Width;
                         int frameHeight = _currentFrame.Height;
-                        _ = Task.Run(() => PromptAndSaveRoi(roiMat, _currentStateName, x, y, width, height, frameWidth, frameHeight));
+                        _ = Task.Run(() => PromptAndSaveRoi(roiMat, x, y, width, height, frameWidth, frameHeight));
                     }
                 }
                 _hasStartPoint = false;
@@ -151,7 +146,7 @@ namespace Garden
             return (_startX, _startY, _currentX, _currentY);
         }
 
-        private void PromptAndSaveRoi(Mat roiMat, string stateName, int x, int y, int width, int height, int frameWidth, int frameHeight)
+        private void PromptAndSaveRoi(Mat roiMat, int x, int y, int width, int height, int frameWidth, int frameHeight)
         {
             Console.Write("Enter ROI name: ");
             _isWaitingForInput = true;
@@ -180,16 +175,6 @@ namespace Garden
             }
 
             string roiType = typeInput.Trim().ToLower() == "y" ? "contour" : "template";
-
-            Console.Write("Optional ROI? (y/n): ");
-            string? optionalInput = null;
-            while (optionalInput == null)
-            {
-                if (_commandQueue.TryDequeue(out var input)) { optionalInput = input; }
-                else { Thread.Sleep(50); }
-            }
-
-            bool isOptional = optionalInput.Trim().ToLower() == "y";
 
             Console.Write("Set click point? (y/n): ");
             string? clickPointInput = null;
@@ -268,79 +253,45 @@ namespace Garden
             }
             _isWaitingForInput = false;
 
-            string stateDirectory = Path.Combine(_saveDirectory, stateName);
-            Directory.CreateDirectory(stateDirectory);
-            string filePath = Path.Combine(stateDirectory, $"{roiName}.png");
+            string filePath = Path.Combine(_saveDirectory, $"{roiName}.png");
 
             Cv2.ImWrite(filePath, roiMat);
             Console.WriteLine($"ROI saved to {filePath} (type: {roiType})");
 
             roiMat.Dispose();
-            SaveRoiData(stateName, roiName, roiType, isOptional, clickOffsetX, clickOffsetY, readAreas, x, y, width, height, frameWidth, frameHeight);
+            SaveRoiData(roiName, roiType, clickOffsetX, clickOffsetY, readAreas, x, y, width, height, frameWidth, frameHeight);
         }
 
-        private void SaveRoiData(string stateName, string roiName, string roiType, bool isOptional, int? clickOffsetX, int? clickOffsetY, List<RoiData.ReadArea> readAreas, int x, int y, int width, int height, int frameWidth, int frameHeight)
+        private void SaveRoiData(string roiName, string roiType, int? clickOffsetX, int? clickOffsetY, List<RoiData.ReadArea> readAreas, int x, int y, int width, int height, int frameWidth, int frameHeight)
         {
             string roiDataPath = Path.Combine(_saveDirectory, "roi_metadata.json");
 
-            // Load existing metadata or create new
-            SavedRoiData savedRoiData;
+            Dictionary<string, RoiData> savedRoiData;
             if (File.Exists(roiDataPath))
             {
                 string jsonString = File.ReadAllText(roiDataPath);
-                savedRoiData = JsonSerializer.Deserialize<SavedRoiData>(jsonString) ?? new SavedRoiData();
+                savedRoiData = JsonSerializer.Deserialize<Dictionary<string, RoiData>>(jsonString) ?? new();
             }
             else
             {
-                savedRoiData = new SavedRoiData();
+                savedRoiData = new();
             }
 
-            // Add or update state entry
-            if (!savedRoiData.ContainsKey(stateName))
+            savedRoiData[roiName] = new RoiData
             {
-                savedRoiData[stateName] = new List<RoiData>();
-            }
+                roiType = roiType,
+                clickOffsetX = clickOffsetX,
+                clickOffsetY = clickOffsetY,
+                readAreas = readAreas,
+                x = x,
+                y = y,
+                width = width,
+                height = height,
+                frameWidth = frameWidth,
+                frameHeight = frameHeight
+            };
+            Console.WriteLine($"Overwriting existing ROI: {roiName}");
 
-            // Check if ROI with same name already exists
-            var existingRoi = savedRoiData[stateName].FirstOrDefault(r => r.name == roiName);
-
-            if (existingRoi != null)
-            {
-                // Overwrite existing ROI
-                existingRoi.roiType = roiType;
-                existingRoi.optional = isOptional;
-                existingRoi.clickOffsetX = clickOffsetX;
-                existingRoi.clickOffsetY = clickOffsetY;
-                existingRoi.readAreas = readAreas;
-                existingRoi.x = x;
-                existingRoi.y = y;
-                existingRoi.width = width;
-                existingRoi.height = height;
-                existingRoi.frameWidth = frameWidth;
-                existingRoi.frameHeight = frameHeight;
-                Console.WriteLine($"Overwriting existing ROI: {roiName}");
-            }
-            else
-            {
-                // Add new ROI metadata
-                savedRoiData[stateName].Add(new RoiData
-                {
-                    name = roiName,
-                    roiType = roiType,
-                    optional = isOptional,
-                    clickOffsetX = clickOffsetX,
-                    clickOffsetY = clickOffsetY,
-                    readAreas = readAreas,
-                    x = x,
-                    y = y,
-                    width = width,
-                    height = height,
-                    frameWidth = frameWidth,
-                    frameHeight = frameHeight
-                });
-            }
-
-            // Save back to file
             var options = new JsonSerializerOptions { WriteIndented = true };
             string updatedJson = JsonSerializer.Serialize(savedRoiData, options);
             File.WriteAllText(roiDataPath, updatedJson);
@@ -356,7 +307,7 @@ namespace Garden
             _currentY = e.Y;
         }
 
-        public void RemoveState(string stateName)
+        public void RemoveRoi(string roiName)
         {
             string roiDataPath = Path.Combine(_saveDirectory, "roi_metadata.json");
 
@@ -369,78 +320,64 @@ namespace Garden
             try
             {
                 string jsonString = File.ReadAllText(roiDataPath);
-                var savedRoiData = JsonSerializer.Deserialize<SavedRoiData>(jsonString) ?? new SavedRoiData();
+                var savedRoiData = JsonSerializer.Deserialize<Dictionary<string, RoiData>>(jsonString) ?? new();
 
-                if (savedRoiData.ContainsKey(stateName))
+                if (savedRoiData.ContainsKey(roiName))
                 {
-                    // Remove state from metadata
-                    savedRoiData.Remove(stateName);
+                    savedRoiData.Remove(roiName);
 
-                    // Save updated metadata
                     var options = new JsonSerializerOptions { WriteIndented = true };
                     string updatedJson = JsonSerializer.Serialize(savedRoiData, options);
                     File.WriteAllText(roiDataPath, updatedJson);
 
-                    // Delete state directory
-                    string stateDirectory = Path.Combine(_saveDirectory, stateName);
-                    if (Directory.Exists(stateDirectory))
-                    {
-                        Directory.Delete(stateDirectory, true);
-                        Console.WriteLine($"Removed ROI state '{stateName}' and deleted directory");
-                    }
-                    else
-                    {
-                        Console.WriteLine($"Removed ROI state '{stateName}' from metadata");
-                    }
+                    string imagePath = Path.Combine(_saveDirectory, $"{roiName}.png");
+                    if (File.Exists(imagePath)) { File.Delete(imagePath); }
+                    Console.WriteLine($"Removed ROI '{roiName}'");
                 }
                 else
                 {
-                    Console.WriteLine($"ROI state '{stateName}' not found in metadata");
+                    Console.WriteLine($"ROI '{roiName}' not found in metadata");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error removing ROI state: {ex.Message}");
+                Console.WriteLine($"Error removing ROI: {ex.Message}");
                 throw;
             }
         }
 
-        public void ListStates()
+        public void ListRois()
         {
             string roiDataPath = Path.Combine(_saveDirectory, "roi_metadata.json");
 
             if (!File.Exists(roiDataPath))
             {
-                Console.WriteLine("No ROI states found (metadata file doesn't exist)");
+                Console.WriteLine("No ROIs found (metadata file doesn't exist)");
                 return;
             }
 
             try
             {
                 string jsonString = File.ReadAllText(roiDataPath);
-                var savedRoiData = JsonSerializer.Deserialize<SavedRoiData>(jsonString) ?? new SavedRoiData();
+                var savedRoiData = JsonSerializer.Deserialize<Dictionary<string, RoiData>>(jsonString) ?? new();
 
                 if (savedRoiData.Count == 0)
                 {
-                    Console.WriteLine("No ROI states found");
+                    Console.WriteLine("No ROIs found");
                     return;
                 }
 
-                Console.WriteLine($"\nAvailable ROI states ({savedRoiData.Count}):");
+                Console.WriteLine($"\nAvailable ROIs ({savedRoiData.Count}):");
                 Console.WriteLine("==========================================");
-                foreach (var state in savedRoiData)
+                foreach (var (name, roi) in savedRoiData)
                 {
-                    Console.WriteLine($"  {state.Key} ({state.Value.Count} ROIs)");
-                    foreach (var roi in state.Value)
-                    {
-                        Console.WriteLine($"    - {roi.name} [{roi.width}x{roi.height}] ({roi.roiType}){(roi.optional ? " [optional]" : "")}{(roi.clickOffsetX.HasValue ? $" [click@{roi.clickOffsetX},{roi.clickOffsetY}]" : "")}");
-                    }
+                    Console.WriteLine($"  {name} [{roi.width}x{roi.height}] ({roi.roiType}){(roi.clickOffsetX.HasValue ? $" [click@{roi.clickOffsetX},{roi.clickOffsetY}]" : "")}");
                 }
                 Console.WriteLine("==========================================\n");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error listing ROI states: {ex.Message}");
+                Console.WriteLine($"Error listing ROIs: {ex.Message}");
                 throw;
             }
         }
