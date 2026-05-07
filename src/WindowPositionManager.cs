@@ -30,7 +30,7 @@ namespace Garden
             if (hWnd == IntPtr.Zero) { return; }
 
             Win32Api.SetWindowPos(hWnd, IntPtr.Zero, _currentX, _y, 0, 0,
-                Win32Api.SWP_NOSIZE | Win32Api.SWP_NOZORDER);
+                Win32Api.SWP_NOSIZE | Win32Api.SWP_NOZORDER | Win32Api.SWP_NOSENDCHANGING);
         }
 
         public void PositionAndAdvance(IntPtr hWnd)
@@ -38,7 +38,7 @@ namespace Garden
             if (hWnd == IntPtr.Zero) { return; }
 
             Win32Api.SetWindowPos(hWnd, IntPtr.Zero, _currentX, _y, 0, 0,
-                Win32Api.SWP_NOSIZE | Win32Api.SWP_NOZORDER);
+                Win32Api.SWP_NOSIZE | Win32Api.SWP_NOZORDER | Win32Api.SWP_NOSENDCHANGING);
             if (Win32Api.GetWindowRect(hWnd, out Win32Api.RECT rect))
             {
                 int width = rect.Right - rect.Left;

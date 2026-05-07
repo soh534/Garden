@@ -55,7 +55,7 @@ namespace Garden
         private Dictionary<string, RoiData> _savedRoiData = new();
         private Dictionary<string, Mat> _roiMats = new();
         private Dictionary<string, (Point[] contour, double area)> _contourRefs = new();
-        private FileSystemWatcher _fileWatcher;
+        private FileSystemWatcher _fileWatcher = null!;
         private readonly object _roiMatsLock = new();
 
         private Mat? _latestFrame;

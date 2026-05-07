@@ -132,6 +132,7 @@ namespace Garden
         // SetWindowPos flags
         public const uint SWP_NOSIZE = 0x0001;
         public const uint SWP_NOZORDER = 0x0004;
+        public const uint SWP_NOSENDCHANGING = 0x0400;
 
         // GetSystemMetrics constants
         public const int SM_CXSCREEN = 0;

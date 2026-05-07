@@ -79,9 +79,9 @@ namespace Garden
             }
 
             Cv2.NamedWindow("Captured Frame", WindowFlags.AutoSize);
-            using (Mat dummy = Mat.Zeros(100, 100, MatType.CV_8UC3))
+            using (Mat firstFrame = CaptureWindow(hWnd))
             {
-                Cv2.ImShow("Captured Frame", dummy);
+                Cv2.ImShow("Captured Frame", firstFrame);
                 Cv2.WaitKey(1);
             }
             _windowPosManager.PositionAndAdvance(Win32Api.FindWindow(null, "Captured Frame"));

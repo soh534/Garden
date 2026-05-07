@@ -49,7 +49,7 @@ namespace Garden
             _commandQueue = commandQueue;
         }
 
-        public void StartRecording()
+        public new void StartRecording()
         {
             if (!_isRecording)
             {

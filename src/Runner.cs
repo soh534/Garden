@@ -114,6 +114,7 @@ namespace Garden
             processingTask.Wait();
             mouseRecorder.Dispose();
             roiRecorder.Dispose();
+            roiDetector.Dispose();
             return;
         }
     }
