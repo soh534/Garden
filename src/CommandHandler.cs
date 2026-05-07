@@ -42,6 +42,7 @@ namespace Garden
             {
                 case "quit":
                     Logger.Info("Quit command received.");
+                    _frameManager.DisableBot();
                     return false;
 
                 case "help":

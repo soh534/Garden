@@ -69,17 +69,26 @@ namespace Garden
                 return;
             }
 
+            IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
+            Win32Api.GetClientRect(hWnd, out Win32Api.RECT rect);
+            double w = rect.Right;
+            double h = rect.Bottom;
+
             Directory.CreateDirectory(_saveDirectory);
             string filePath = Path.Combine(_saveDirectory, $"{actionName}.json");
 
-            var options = new JsonSerializerOptions
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            var stored = _recordedEvents.Select(e => new
             {
-                WriteIndented = true
-            };
-
-            string jsonString = JsonSerializer.Serialize(_recordedEvents, options);
+                e.Timestamp,
+                X = e.X / w,
+                Y = e.Y / h,
+                e.IsMouseDown,
+                e.IsMouseMove
+            });
+            string jsonString = JsonSerializer.Serialize(stored, options);
             File.WriteAllText(filePath, jsonString);
-            Console.WriteLine($"Mouse events saved to {filePath}");
+            Console.WriteLine($"Mouse events saved to {filePath} (frame: {w}x{h})");
         }
 
         protected override void OnMouseClick(object? sender, MouseEventReporter.MouseEvent e)

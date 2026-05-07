@@ -3,6 +3,7 @@ using NLog;
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
@@ -45,6 +46,25 @@ namespace Garden
             _actionQueue = actionQueue;
         }
 
+        private class StoredEvent
+        {
+            public DateTime Timestamp { get; set; }
+            public double X { get; set; }
+            public double Y { get; set; }
+            public bool IsMouseDown { get; set; }
+            public bool IsMouseMove { get; set; }
+        }
+
+        private int GetCurrentWindowSize(out int height)
+        {
+            height = 0;
+            IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
+            if (hWnd == IntPtr.Zero) return 0;
+            Win32Api.GetClientRect(hWnd, out Win32Api.RECT rect);
+            height = rect.Bottom;
+            return rect.Right;
+        }
+
         private List<MouseEvent>? LoadAction(string actionName)
         {
             string actionFileName = $"{actionName}.json";
@@ -59,16 +79,25 @@ namespace Garden
             try
             {
                 string jsonString = File.ReadAllText(filePath);
-                var events = JsonSerializer.Deserialize<List<MouseEvent>>(jsonString);
+                var stored = JsonSerializer.Deserialize<List<StoredEvent>>(jsonString);
 
-                if (events == null || events.Count == 0)
+                if (stored == null || stored.Count == 0)
                 {
                     Logger.Info($"No events found in {actionName}");
                     return null;
                 }
 
-                Logger.Info($"Loaded {events.Count} events from {actionName}");
-                return events;
+                int w = GetCurrentWindowSize(out int h);
+                Logger.Info($"Loaded {stored.Count} events from {actionName} (window {w}x{h})");
+
+                return stored.Select(e => new MouseEvent
+                {
+                    Timestamp = e.Timestamp,
+                    X = (int)(e.X * w),
+                    Y = (int)(e.Y * h),
+                    IsMouseDown = e.IsMouseDown,
+                    IsMouseMove = e.IsMouseMove
+                }).ToList();
             }
             catch (Exception ex)
             {
