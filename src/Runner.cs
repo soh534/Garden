@@ -12,6 +12,10 @@ namespace Garden
 
         public void Run()
         {
+            // InteropDotNet (Tesseract) uses Environment.CurrentDirectory to find native DLLs.
+            // Without Visual Studio, dotnet run sets it to src/ instead of the output folder.
+            Environment.CurrentDirectory = AppContext.BaseDirectory;
+
             string? dataRoot = Environment.GetEnvironmentVariable("GARDEN_DATA");
             if (string.IsNullOrEmpty(dataRoot))
             {

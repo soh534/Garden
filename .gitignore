@@ -1,5 +1,6 @@
-# Claude worktrees
+# Claude
 .claude/worktrees/
+.claude/settings.local.json
 
 # Visual Studio standard ignores
 .vs/

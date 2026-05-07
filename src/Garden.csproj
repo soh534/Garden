@@ -3,6 +3,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -30,6 +31,9 @@
 
   <Target Name="CopyNativeLibs" AfterTargets="Build">
     <Copy SourceFiles="$(OutputPath)runtimes\win-x64\native\OpenCvSharpExtern.dll"
+          DestinationFolder="$(OutputPath)"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(OutputPath)x64\leptonica-1.82.0.dll;$(OutputPath)x64\tesseract50.dll"
           DestinationFolder="$(OutputPath)"
           SkipUnchangedFiles="true" />
   </Target>
