@@ -108,7 +108,7 @@ namespace Garden
                     return true;
 
                 default:
-                    Logger.Info($"Unknown command: {command}");
+                    Console.WriteLine($"Unknown command: '{command}'. Type 'help' for available commands.");
                     return true;
             }
         }
