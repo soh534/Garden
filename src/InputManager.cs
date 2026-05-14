@@ -25,6 +25,13 @@ namespace Garden
         public static int PhoneWidth  => _phoneWidth;
         public static int PhoneHeight => _phoneHeight;
 
+        // Coordinate space conversions between phone-native and any display resolution.
+        public static (int x, int y) PhoneToDisplay(int px, int py, int displayW, int displayH)
+            => (px * displayW / _phoneWidth, py * displayH / _phoneHeight);
+
+        public static (int x, int y) DisplayToPhone(int dx, int dy, int displayW, int displayH)
+            => (dx * _phoneWidth / displayW, dy * _phoneHeight / displayH);
+
         public static void SendTouch(byte action, int x, int y)
         {
             if (_controlStream == null) return;

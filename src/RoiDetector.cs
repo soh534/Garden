@@ -59,8 +59,6 @@ namespace Garden
         private readonly object _roiMatsLock = new();
 
         private Mat? _latestFrame;
-        private Mat? _latestUpscaledFrame; // upscaled to canonical recording size when frame is smaller
-        private Size _canonicalSize;       // the recording resolution derived from ROI metadata
         private readonly object _frameLock = new();
 
         private volatile DetectionSnapshot _snapshot = new(null, null, new(), new());
@@ -89,14 +87,6 @@ namespace Garden
             {
                 _latestFrame?.Dispose();
                 _latestFrame = frame.Clone();
-
-                _latestUpscaledFrame?.Dispose();
-                _latestUpscaledFrame = null;
-                if (_canonicalSize.Width > 0 && frame.Width < _canonicalSize.Width)
-                {
-                    _latestUpscaledFrame = new Mat();
-                    Cv2.Resize(frame, _latestUpscaledFrame, _canonicalSize);
-                }
             }
         }
 
@@ -104,35 +94,30 @@ namespace Garden
         {
             info = default;
             Mat? frame;
-            Mat? upscaledFrame;
             lock (_frameLock)
             {
                 frame = _latestFrame?.Clone();
-                upscaledFrame = _latestUpscaledFrame?.Clone();
             }
             if (frame == null) { return false; }
 
             try
             {
-                bool found = TryFindRoiInFrame(frame, upscaledFrame, name, out info);
+                bool found = TryFindRoiInFrame(frame, name, out info);
                 _snapshot = new DetectionSnapshot(name, found ? info : null, _snapshot.OcrReadings, _snapshot.ReadAreaRects);
                 return found;
             }
             finally
             {
                 frame.Dispose();
-                upscaledFrame?.Dispose();
             }
         }
 
         public string? FindBestRoi(IEnumerable<string> names)
         {
             Mat? frame;
-            Mat? upscaledFrame;
             lock (_frameLock)
             {
                 frame = _latestFrame?.Clone();
-                upscaledFrame = _latestUpscaledFrame?.Clone();
             }
             if (frame == null) { return null; }
 
@@ -143,7 +128,7 @@ namespace Garden
 
                 foreach (string name in names)
                 {
-                    if (TryFindRoiInFrame(frame, upscaledFrame, name, out DetectedRoiInfo info) && info.Score < bestScore)
+                    if (TryFindRoiInFrame(frame, name, out DetectedRoiInfo info) && info.Score < bestScore)
                     {
                         bestScore = info.Score;
                         bestName = name;
@@ -155,11 +140,10 @@ namespace Garden
             finally
             {
                 frame.Dispose();
-                upscaledFrame?.Dispose();
             }
         }
 
-        private bool TryFindRoiInFrame(Mat frame, Mat? upscaledFrame, string name, out DetectedRoiInfo info)
+        private bool TryFindRoiInFrame(Mat frame, string name, out DetectedRoiInfo info)
         {
             info = default;
             lock (_roiMatsLock)
@@ -172,35 +156,23 @@ namespace Garden
                     throw new InvalidOperationException($"ROI '{name}' has no frame dimensions recorded. Re-record it.");
                 }
 
-                // outputScale converts detection-space coords back to actual frame space.
-                // When the frame is smaller than the recording resolution, detect on the
-                // pre-upscaled frame at detectionScale=1.0 so the original threshold applies.
-                // The upscaled frame is already cloned by the caller — no extra lock needed.
                 double outputScale = (double)frame.Width / roiData.frameWidth;
-                Mat detectionFrame = (upscaledFrame != null && outputScale < 1.0) ? upscaledFrame : frame;
-                double detectionScale = (upscaledFrame != null && outputScale < 1.0) ? 1.0 : outputScale;
 
                 double score;
                 int centerX, centerY, clickX, clickY;
 
                 if (roiData.roiType == "contour" && _contourRefs.TryGetValue(name, out var contourRef))
                 {
-                    DetectContourRoi(detectionFrame, contourRef.contour, contourRef.area, detectionScale,
+                    DetectContourRoi(frame, contourRef.contour, contourRef.area, outputScale,
                         out double combinedScore, out centerX, out centerY);
                     score = combinedScore < ContourDetectionThreshold ? 0.0 : combinedScore;
-                    centerX = (int)(centerX * outputScale);
-                    centerY = (int)(centerY * outputScale);
                     clickX = centerX;
                     clickY = centerY;
                 }
                 else
                 {
-                    DetectRoi(detectionFrame, roiMat, detectionScale, out score,
+                    DetectRoi(frame, roiMat, outputScale, out score,
                         out int minLocX, out int minLocY, out centerX, out centerY);
-                    minLocX = (int)(minLocX * outputScale);
-                    minLocY = (int)(minLocY * outputScale);
-                    centerX = (int)(centerX * outputScale);
-                    centerY = (int)(centerY * outputScale);
                     clickX = roiData.clickOffsetX.HasValue
                         ? minLocX + (int)(roiData.clickOffsetX.Value * outputScale)
                         : centerX;
@@ -219,17 +191,6 @@ namespace Garden
 
                 return roiData.roiType == "contour" ? score == 0.0 : score < TemplateThreshold;
             }
-        }
-
-        private Size ComputeCanonicalSize()
-        {
-            if (_savedRoiData.Count == 0) { return default; }
-            // Use the most common (frameWidth, frameHeight) pair across all ROIs.
-            return _savedRoiData.Values
-                .GroupBy(r => (r.frameWidth, r.frameHeight))
-                .OrderByDescending(g => g.Count())
-                .Select(g => new Size(g.Key.frameWidth, g.Key.frameHeight))
-                .First();
         }
 
         public void ProcessReadAreas(string roiName, DetectedRoiInfo roiInfo)
@@ -338,7 +299,6 @@ namespace Garden
                 string jsonString = File.ReadAllText(roiDataPath);
                 _savedRoiData = JsonSerializer.Deserialize<Dictionary<string, RoiData>>(jsonString) ?? new();
                 Logger.Info($"Loaded {_savedRoiData.Count} ROIs");
-                _canonicalSize = ComputeCanonicalSize();
             }
             catch (Exception ex)
             {
@@ -507,7 +467,7 @@ namespace Garden
         {
             _fileWatcher.Dispose();
             _ocrReader.Dispose();
-            lock (_frameLock) { _latestFrame?.Dispose(); _latestUpscaledFrame?.Dispose(); }
+            lock (_frameLock) { _latestFrame?.Dispose(); }
             lock (_roiMatsLock)
             {
                 foreach (var mat in _roiMats.Values) { mat.Dispose(); }

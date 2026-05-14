@@ -97,6 +97,13 @@ namespace Garden
             return null;
         }
 
+        private (int x, int y) ScaleToFrame(int dispX, int dispY)
+        {
+            IntPtr hWnd = WindowManager.Instance.GetWindowHandle(WindowType.CapturedFrame);
+            Win32Api.GetClientRect(hWnd, out Win32Api.RECT rect);
+            return InputManager.DisplayToPhone(dispX, dispY, rect.Right, rect.Bottom);
+        }
+
         protected override void OnMouseClick(object? sender, MouseEventReporter.MouseEvent e)
         {
             if (!_isRecording || _currentFrame == null) return;
@@ -117,7 +124,7 @@ namespace Garden
                 int endY = e.Y;
                 int x = Math.Min(_startX, endX);
                 int y = Math.Min(_startY, endY);
-                int width = Math.Abs(endX - _startX);
+                int width  = Math.Abs(endX - _startX);
                 int height = Math.Abs(endY - _startY);
 
                 if (width > 0 && height > 0)
@@ -125,11 +132,14 @@ namespace Garden
                     if (_captureMode == CaptureMode.BoundingBox) { _currentX = endX; _currentY = endY; _captureReady = true; }
                     else
                     {
-                        Rect roi = new Rect(x, y, width, height);
+                        var (fx,  fy)  = ScaleToFrame(x, y);
+                        var (fx2, fy2) = ScaleToFrame(x + width, y + height);
+                        int fw = fx2 - fx, fh = fy2 - fy;
+                        Rect roi   = new Rect(fx, fy, fw, fh);
                         Mat roiMat = new Mat(_currentFrame, roi);
-                        int frameWidth = _currentFrame.Width;
+                        int frameWidth  = _currentFrame.Width;
                         int frameHeight = _currentFrame.Height;
-                        _ = Task.Run(() => PromptAndSaveRoi(roiMat, x, y, width, height, frameWidth, frameHeight));
+                        _ = Task.Run(() => PromptAndSaveRoi(roiMat, fx, fy, fw, fh, frameWidth, frameHeight));
                     }
                 }
                 _hasStartPoint = false;
@@ -192,8 +202,9 @@ namespace Garden
             {
                 Console.WriteLine("Click the target point anywhere on the frame...");
                 var (sx, sy, _, _) = WaitForCapture(CaptureMode.ClickPoint);
-                clickOffsetX = sx - x;
-                clickOffsetY = sy - y;
+                var (fsx, fsy) = ScaleToFrame(sx, sy);
+                clickOffsetX = fsx - x;
+                clickOffsetY = fsy - y;
                 Console.WriteLine($"Click point set at offset ({clickOffsetX}, {clickOffsetY})");
             }
 
@@ -212,10 +223,12 @@ namespace Garden
                 _isWaitingForInput = false;
                 Console.WriteLine("Draw read area on frame (drag to select)...");
                 var (raStartX, raStartY, raEndX, raEndY) = WaitForCapture(CaptureMode.BoundingBox);
-                int raX = Math.Min(raStartX, raEndX) - x;
-                int raY = Math.Min(raStartY, raEndY) - y;
-                int raW = Math.Abs(raEndX - raStartX);
-                int raH = Math.Abs(raEndY - raStartY);
+                var (fx1, fy1) = ScaleToFrame(Math.Min(raStartX, raEndX), Math.Min(raStartY, raEndY));
+                var (fx2, fy2) = ScaleToFrame(Math.Max(raStartX, raEndX), Math.Max(raStartY, raEndY));
+                int raX = fx1 - x;
+                int raY = fy1 - y;
+                int raW = fx2 - fx1;
+                int raH = fy2 - fy1;
 
                 _isWaitingForInput = true;
                 Console.Write("Enter read area name: ");

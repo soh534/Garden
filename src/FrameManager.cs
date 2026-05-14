@@ -259,8 +259,7 @@ namespace Garden
             var cursorPos = _actionPlayer.CurrentCursorPosition;
             if (cursorPos.HasValue)
             {
-                int x = cursorPos.Value.X * frame.Width  / InputManager.PhoneWidth;
-                int y = cursorPos.Value.Y * frame.Height / InputManager.PhoneHeight;
+                var (x, y) = InputManager.PhoneToDisplay(cursorPos.Value.X, cursorPos.Value.Y, frame.Width, frame.Height);
                 Cv2.Circle(frame, new OpenCvSharp.Point(x, y), 10, Scalar.Red, 2);
             }
         }
@@ -278,8 +277,11 @@ namespace Garden
         {
             foreach (var (key, rect) in snapshot.ReadAreaRects)
             {
-                Cv2.Rectangle(frame, rect, Scalar.Cyan, 2);
-                Cv2.PutText(frame, key, new OpenCvSharp.Point(rect.X, rect.Y - 5),
+                var (rx, ry) = InputManager.PhoneToDisplay(rect.X, rect.Y, frame.Width, frame.Height);
+                var (rw, rh) = InputManager.PhoneToDisplay(rect.Width, rect.Height, frame.Width, frame.Height);
+                var dispRect = new Rect(rx, ry, rw, rh);
+                Cv2.Rectangle(frame, dispRect, Scalar.Cyan, 2);
+                Cv2.PutText(frame, key, new OpenCvSharp.Point(dispRect.X, dispRect.Y - 5),
                     HersheyFonts.HersheySimplex, 0.4, Scalar.Cyan, 1);
             }
         }
@@ -291,9 +293,9 @@ namespace Garden
             Mat? roiMat = _roiDetector.GetRoiMat(roiInfo.RoiName);
             if (roiMat == null) { return; }
 
-            int topLeftX = roiInfo.Center.X - roiMat.Width / 2;
-            int topLeftY = roiInfo.Center.Y - roiMat.Height / 2;
-            Rect box = new Rect(topLeftX, topLeftY, roiMat.Width, roiMat.Height);
+            var (cx, cy)       = InputManager.PhoneToDisplay(roiInfo.Center.X, roiInfo.Center.Y, frame.Width, frame.Height);
+            var (dispW, dispH) = InputManager.PhoneToDisplay(roiMat.Width, roiMat.Height, frame.Width, frame.Height);
+            Rect box = new Rect(cx - dispW / 2, cy - dispH / 2, dispW, dispH);
             Cv2.Rectangle(frame, box, Scalar.Blue, 2);
             Cv2.PutText(frame, roiInfo.RoiName,
                 new OpenCvSharp.Point(box.X, box.Y - 20),
