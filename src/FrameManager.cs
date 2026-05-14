@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Net.Sockets;
 
 using OpenCvSharp;
 using System.Drawing;
@@ -21,6 +22,11 @@ namespace Garden
         private readonly WindowPositionManager _windowPosManager;
 
         private readonly string _imageSavePath;
+        private readonly NetworkStream _videoStream;
+        private readonly int _phoneWidth;
+        private readonly int _phoneHeight;
+        private Mat? _latestVideoFrame;
+        private readonly object _videoFrameLock = new();
 
         private const int TARGET_FRAME_TIME_MS = 33;
 
@@ -38,15 +44,85 @@ namespace Garden
         public void EnableBot()  { _isBotEnabled = true;  _bot.Enable(); }
         public void DisableBot() { _isBotEnabled = false; _bot.Disable(); }
 
-        public FrameManager(string imageSavePath, LuaBot bot, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, RoiRecorder roiRecorder, RoiDetector roiDetector, WindowPositionManager windowPosManager)
+        public FrameManager(string imageSavePath, LuaBot bot, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, RoiRecorder roiRecorder, RoiDetector roiDetector, WindowPositionManager windowPosManager, ScrcpyManager.GardenServer gardenServer)
         {
-            _imageSavePath = imageSavePath;
-            _bot = bot;
-            _mouseRecorder = mouseRecorder;
-            _actionPlayer = actionPlayer;
-            _roiRecorder = roiRecorder;
-            _roiDetector = roiDetector;
+            _imageSavePath    = imageSavePath;
+            _bot              = bot;
+            _mouseRecorder    = mouseRecorder;
+            _actionPlayer     = actionPlayer;
+            _roiRecorder      = roiRecorder;
+            _roiDetector      = roiDetector;
             _windowPosManager = windowPosManager;
+            _videoStream      = gardenServer.VideoStream;
+            _phoneWidth       = gardenServer.PhoneWidth;
+            _phoneHeight      = gardenServer.PhoneHeight;
+        }
+
+        private System.Net.Sockets.TcpListener? _ffmpegOutputListener;
+        private System.Net.Sockets.TcpClient?   _ffmpegOutputClient;
+
+        private Process StartVideoDecoder(int width, int height)
+        {
+            var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            listener.Start();
+            int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+            _ffmpegOutputListener = listener;
+
+            var proc = new Process();
+            proc.StartInfo.FileName               = "ffmpeg";
+            proc.StartInfo.Arguments              = $"-loglevel error -probesize 32 -analyzeduration 0 -f h264 -i pipe:0 -f rawvideo -pix_fmt bgr24 tcp://127.0.0.1:{port}";
+            proc.StartInfo.RedirectStandardInput  = true;
+            proc.StartInfo.RedirectStandardError  = true;
+            proc.StartInfo.UseShellExecute        = false;
+            proc.StartInfo.CreateNoWindow         = true;
+            proc.Start();
+            Task.Run(() => {
+                string? line;
+                while ((line = proc.StandardError.ReadLine()) != null)
+                    Console.WriteLine($"[ffmpeg] {line}");
+            });
+
+            return proc;
+        }
+
+        private void VideoStreamLoop(Process ffmpeg, CancellationToken token)
+        {
+            var header = new byte[12];
+            try
+            {
+                while (!token.IsCancellationRequested)
+                {
+                    _videoStream.ReadExactly(header);
+                    int packetSize = (header[8] << 24) | (header[9] << 16) | (header[10] << 8) | header[11];
+                    var data = new byte[packetSize];
+                    _videoStream.ReadExactly(data);
+                    ffmpeg.StandardInput.BaseStream.Write(data, 0, data.Length);
+                    ffmpeg.StandardInput.BaseStream.Flush();
+                }
+            }
+            catch (Exception e) { Logger.Error($"VideoStreamLoop error: {e.Message}"); }
+        }
+
+        private void VideoDecodeLoop(Process ffmpeg, CancellationToken token)
+        {
+            int frameSize = _phoneWidth * _phoneHeight * 3;
+            var buf = new byte[frameSize];
+            var stream = _ffmpegOutputClient!.GetStream();
+            try
+            {
+                while (!token.IsCancellationRequested)
+                {
+                    stream.ReadExactly(buf);
+                    var mat = new Mat(_phoneHeight, _phoneWidth, MatType.CV_8UC3);
+                    Marshal.Copy(buf, 0, mat.Data, frameSize);
+                    lock (_videoFrameLock)
+                    {
+                        _latestVideoFrame?.Dispose();
+                        _latestVideoFrame = mat;
+                    }
+                }
+            }
+            catch (Exception e) { Console.WriteLine($"[Garden] VideoDecodeLoop error: {e.Message}"); }
         }
 
         public Mat CaptureWindow(IntPtr hWnd)
@@ -72,18 +148,31 @@ namespace Garden
             var token = cts.Token;
 
             IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
-            if (hWnd == IntPtr.Zero)
+            Win32Api.GetClientRect(hWnd, out Win32Api.RECT scrcpyRect);
+            int displayW = scrcpyRect.Right  > 0 ? scrcpyRect.Right  : _phoneWidth  / 2;
+            int displayH = scrcpyRect.Bottom > 0 ? scrcpyRect.Bottom : _phoneHeight / 2;
+
+            var ffmpeg = StartVideoDecoder(_phoneWidth, _phoneHeight);
+            Task.Run(() => VideoStreamLoop(ffmpeg, token));
+            Console.WriteLine("[Garden] waiting for ffmpeg TCP output connection...");
+            _ffmpegOutputClient = _ffmpegOutputListener!.AcceptTcpClient();
+            _ffmpegOutputListener.Stop();
+            Console.WriteLine("[Garden] ffmpeg TCP output connected");
+            Task.Run(() => VideoDecodeLoop(ffmpeg, token));
+
+            Mat? firstVideoFrame = null;
+            while (firstVideoFrame == null)
             {
-                Logger.Error("Window not found!");
-                return;
+                lock (_videoFrameLock) { firstVideoFrame = _latestVideoFrame?.Clone(); }
+                if (firstVideoFrame == null) Thread.Sleep(10);
             }
 
             Cv2.NamedWindow("Captured Frame", WindowFlags.AutoSize);
-            using (Mat firstFrame = CaptureWindow(hWnd))
-            {
-                Cv2.ImShow("Captured Frame", firstFrame);
-                Cv2.WaitKey(1);
-            }
+            using var displayFirst = new Mat();
+            Cv2.Resize(firstVideoFrame, displayFirst, new OpenCvSharp.Size(displayW, displayH));
+            firstVideoFrame.Dispose();
+            Cv2.ImShow("Captured Frame", displayFirst);
+            Cv2.WaitKey(1);
             _windowPosManager.PositionAndAdvance(Win32Api.FindWindow(null, "Captured Frame"));
 
             var commandHandler = new CommandHandler(_imageSavePath, _mouseRecorder, _actionPlayer, actionQueue, _roiRecorder, this);
@@ -98,20 +187,23 @@ namespace Garden
                 try
                 {
                     _sw.Restart();
-                    using Mat frame = CaptureWindow(hWnd);
-                    _roiRecorder.SetCurrentFrame(frame);
-                    _roiDetector.SetFrame(frame);
+                    Mat? phoneFrame = null;
+                    lock (_videoFrameLock) { phoneFrame = _latestVideoFrame?.Clone(); }
+                    if (phoneFrame == null) { Thread.Sleep(1); continue; }
+
+                    _roiRecorder.SetCurrentFrame(phoneFrame);
+                    _roiDetector.SetFrame(phoneFrame);
                     _msCapture = _sw.Elapsed.TotalMilliseconds;
 
                     lock (_frameLock)
                     {
                         _sharedFrame?.Dispose();
-                        _sharedFrame = frame.Clone();
+                        _sharedFrame = phoneFrame.Clone();
                     }
 
                     if (!_roiRecorder.IsWaitingForInput && commandQueue.TryDequeue(out var command))
                     {
-                        bool shouldContinue = commandHandler.Handle(command, frame);
+                        bool shouldContinue = commandHandler.Handle(command, phoneFrame);
                         if (!shouldContinue)
                         {
                             cts.Cancel();
@@ -121,16 +213,21 @@ namespace Garden
 
                     var snapshot = _roiDetector.Snapshot;
                     _sw.Restart();
-                    DrawCreatingRoi(frame, _roiRecorder);
+
+                    using var displayFrame = new Mat();
+                    Cv2.Resize(phoneFrame, displayFrame, new OpenCvSharp.Size(displayW, displayH));
+                    phoneFrame.Dispose();
+
+                    DrawCreatingRoi(displayFrame, _roiRecorder);
                     if (!_roiRecorder.IsRecording)
                     {
-                        DrawAction(frame);
-                        DrawDetectedRois(frame, snapshot);
-                        DrawReadAreas(frame, snapshot);
-                        DrawBotStatus(frame, snapshot);
-                        DrawProfiler(frame, snapshot);
+                        DrawAction(displayFrame);
+                        DrawDetectedRois(displayFrame, snapshot);
+                        DrawReadAreas(displayFrame, snapshot);
+                        DrawBotStatus(displayFrame, snapshot);
+                        DrawProfiler(displayFrame, snapshot);
                     }
-                    Cv2.ImShow("Captured Frame", frame);
+                    Cv2.ImShow("Captured Frame", displayFrame);
                     Cv2.WaitKey(1);
                     _msDraw = _sw.Elapsed.TotalMilliseconds;
                 }
@@ -162,7 +259,9 @@ namespace Garden
             var cursorPos = _actionPlayer.CurrentCursorPosition;
             if (cursorPos.HasValue)
             {
-                Cv2.Circle(frame, cursorPos.Value, 10, Scalar.Red, 2);
+                int x = cursorPos.Value.X * frame.Width  / InputManager.PhoneWidth;
+                int y = cursorPos.Value.Y * frame.Height / InputManager.PhoneHeight;
+                Cv2.Circle(frame, new OpenCvSharp.Point(x, y), 10, Scalar.Red, 2);
             }
         }
 

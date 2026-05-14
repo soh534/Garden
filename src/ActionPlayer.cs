@@ -55,16 +55,6 @@ namespace Garden
             public bool IsMouseMove { get; set; }
         }
 
-        private int GetCurrentWindowSize(out int height)
-        {
-            height = 0;
-            IntPtr hWnd = WindowManager.Instance.GetScrcpyWindowHandle();
-            if (hWnd == IntPtr.Zero) return 0;
-            Win32Api.GetClientRect(hWnd, out Win32Api.RECT rect);
-            height = rect.Bottom;
-            return rect.Right;
-        }
-
         private List<MouseEvent>? LoadAction(string actionName)
         {
             string actionFileName = $"{actionName}.json";
@@ -87,8 +77,9 @@ namespace Garden
                     return null;
                 }
 
-                int w = GetCurrentWindowSize(out int h);
-                Logger.Info($"Loaded {stored.Count} events from {actionName} (window {w}x{h})");
+                int w = InputManager.PhoneWidth;
+                int h = InputManager.PhoneHeight;
+                Logger.Info($"Loaded {stored.Count} events from {actionName} (phone {w}x{h})");
 
                 return stored.Select(e => new MouseEvent
                 {
@@ -221,17 +212,17 @@ namespace Garden
             _currentCursorPosition = CalculateCurrentCursorPosition(time);
             if (_currentCursorPosition.HasValue)
             {
-                if (WindowManager.Instance.ConvertToScreenCoordinates(_currentCursorPosition.Value.X, _currentCursorPosition.Value.Y, out int screenX, out int screenY))
-                {
-                    InputManager.Move(screenX, screenY);
-                }
+                InputManager.SendTouch(InputManager.TOUCH_MOVE,
+                    _currentCursorPosition.Value.X,
+                    _currentCursorPosition.Value.Y);
             }
 
             // 3. Click if it's time
             if (actionToExecute != null && !actionToExecute.IsMouseMove)
             {
-                Thread.Sleep(10); // Small delay for movement
-                InputManager.MouseEvent(actionToExecute.IsMouseDown);
+                InputManager.SendTouch(
+                    actionToExecute.IsMouseDown ? InputManager.TOUCH_DOWN : InputManager.TOUCH_UP,
+                    actionToExecute.X, actionToExecute.Y);
             }
 
             // Clear queue after having emptied

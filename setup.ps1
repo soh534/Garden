@@ -27,6 +27,9 @@ winget install Microsoft.DotNet.SDK.8 --accept-source-agreements --accept-packag
 Write-Host "Installing scrcpy..."
 winget install Genymobile.scrcpy --accept-source-agreements --accept-package-agreements
 
+Write-Host "Installing ffmpeg..."
+winget install Gyan.FFmpeg --accept-source-agreements --accept-package-agreements
+
 # 5. Refresh env vars so PATH changes take effect immediately
 refreshenv
 

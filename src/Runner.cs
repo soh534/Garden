@@ -50,6 +50,10 @@ namespace Garden
             Process? proc = scrcpyManager.Start();
             Debug.Assert(proc != null);
 
+            var gardenServer = scrcpyManager.StartGardenServer();
+            Debug.Assert(gardenServer != null);
+            InputManager.Initialize(gardenServer.ControlStream, gardenServer.PhoneWidth, gardenServer.PhoneHeight);
+
             // Position scrcpy window
             // Create window position manager
             WindowPositionManager windowPosManager = new(configManager.WindowPositions);
@@ -86,7 +90,7 @@ namespace Garden
             RoiDetector roiDetector = new(roiSavePath, imageSavePath);
 
             LuaBot bot = new(luaScriptPath, roiDetector, actionPlayer);
-            FrameManager ssManager = new(imageSavePath, bot, mouseRecorder, actionPlayer, roiRecorder, roiDetector, windowPosManager);
+            FrameManager ssManager = new(imageSavePath, bot, mouseRecorder, actionPlayer, roiRecorder, roiDetector, windowPosManager, gardenServer);
 
 
             var processingTask = Task.Run(() => ssManager.ProcessFrames(cts, proc, commandQueue, actionQueue), cts.Token);

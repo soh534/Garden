@@ -88,7 +88,7 @@ namespace Garden
             });
             string jsonString = JsonSerializer.Serialize(stored, options);
             File.WriteAllText(filePath, jsonString);
-            Console.WriteLine($"Mouse events saved to {filePath} (frame: {w}x{h})");
+            Console.WriteLine($"Mouse events saved to {filePath} (normalized by scrcpy window {w}x{h} → playback at phone native)");
         }
 
         protected override void OnMouseClick(object? sender, MouseEventReporter.MouseEvent e)
