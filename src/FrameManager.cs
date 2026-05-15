@@ -201,13 +201,16 @@ namespace Garden
                         _sharedFrame = phoneFrame.Clone();
                     }
 
-                    if (!_roiRecorder.IsWaitingForInput && commandQueue.TryDequeue(out var command))
+                    if (commandQueue.TryDequeue(out var command))
                     {
-                        bool shouldContinue = commandHandler.Handle(command, phoneFrame);
-                        if (!shouldContinue)
+                        if (_roiRecorder.IsPrompting)
                         {
-                            cts.Cancel();
-                            break;
+                            _roiRecorder.FeedInput(command);
+                        }
+                        else
+                        {
+                            bool shouldContinue = commandHandler.Handle(command, phoneFrame);
+                            if (!shouldContinue) { cts.Cancel(); break; }
                         }
                     }
 

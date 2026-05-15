@@ -79,7 +79,8 @@ namespace Garden
                     switch (verb)
                     {
                         case "record":
-                            _roiRecorder.StartRecording();
+                            if (parts.Length < 3) { Console.WriteLine("Usage: roi record <name>"); break; }
+                            _roiRecorder.StartRecording(string.Join(' ', parts.Skip(2)).Trim());
                             break;
                         case "stop":
                             _roiRecorder.StopRecording();
@@ -122,8 +123,8 @@ namespace Garden
             Console.WriteLine("  action reset                - Clear recorded events (stay recording)");
             Console.WriteLine("  action save <name>          - Save recorded clicks & end recording");
             Console.WriteLine("  action replay <filename>    - Replay recorded clicks");
-            Console.WriteLine("  roi record                  - Start recording an ROI");
-            Console.WriteLine("  roi stop                    - Stop ROI recording");
+            Console.WriteLine("  roi record <name>           - Record an ROI and save it as <name>");
+            Console.WriteLine("  roi stop                    - Cancel ROI recording");
             Console.WriteLine("  roi list                    - List all ROIs");
             Console.WriteLine("  roi remove <roi_name>       - Remove an ROI and its image");
             Console.WriteLine("  bot start                   - Start the bot automation");

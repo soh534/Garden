@@ -33,7 +33,7 @@ namespace Garden
         protected abstract void OnMouseClick(object? sender, MouseEventReporter.MouseEvent e);
         protected abstract void OnMouseMove(object? sender, MouseEventReporter.MouseEvent e);
 
-        public void Dispose()
+        public virtual void Dispose()
         {
             StopRecording();
             _mouseReporter.Dispose();

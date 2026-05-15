@@ -86,7 +86,7 @@ namespace Garden
 
             MouseEventRecorder mouseRecorder = new(actionSavePath);
             ActionPlayer actionPlayer = new(actionSavePath, actionQueue);
-            RoiRecorder roiRecorder = new(roiSavePath, commandQueue);
+            RoiRecorder roiRecorder = new(roiSavePath);
             RoiDetector roiDetector = new(roiSavePath, imageSavePath);
 
             LuaBot bot = new(luaScriptPath, roiDetector, actionPlayer);
