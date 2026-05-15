@@ -100,7 +100,7 @@ namespace Garden
                     ffmpeg.StandardInput.BaseStream.Flush();
                 }
             }
-            catch (Exception e) { Logger.Error($"VideoStreamLoop error: {e.Message}"); }
+            catch (Exception e) { if (!token.IsCancellationRequested) { Logger.Error($"VideoStreamLoop error: {e.Message}"); } }
         }
 
         private void VideoDecodeLoop(Process ffmpeg, CancellationToken token)
@@ -122,7 +122,7 @@ namespace Garden
                     }
                 }
             }
-            catch (Exception e) { Console.WriteLine($"[Garden] VideoDecodeLoop error: {e.Message}"); }
+            catch (Exception e) { if (!token.IsCancellationRequested) { Console.WriteLine($"[Garden] VideoDecodeLoop error: {e.Message}"); } }
         }
 
         public Mat CaptureWindow(IntPtr hWnd)
@@ -246,6 +246,11 @@ namespace Garden
             }
 
             Task.WaitAll(botTask, controlTask);
+            if (!ffmpeg.HasExited) { ffmpeg.Kill(); }
+            ffmpeg.Dispose();
+            _ffmpegOutputClient?.Dispose();
+            lock (_videoFrameLock) { _latestVideoFrame?.Dispose(); }
+            Cv2.DestroyAllWindows();
         }
 
         private void ControlLoop(CancellationToken token)

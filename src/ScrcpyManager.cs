@@ -11,7 +11,10 @@ namespace Garden
         private const int GardenServerScid = 1;
         private const int GardenServerPort = 27184;
 
-        public record GardenServer(NetworkStream VideoStream, NetworkStream ControlStream, int PhoneWidth, int PhoneHeight);
+        public record GardenServer(TcpClient VideoClient, TcpClient ControlClient, NetworkStream VideoStream, NetworkStream ControlStream, int PhoneWidth, int PhoneHeight) : IDisposable
+        {
+            public void Dispose() { VideoClient.Dispose(); ControlClient.Dispose(); }
+        }
 
         internal static bool IsAvailable()
         {
@@ -92,7 +95,12 @@ namespace Garden
             int phoneHeight = (heightBuf[0] << 24) | (heightBuf[1] << 16) | (heightBuf[2] << 8) | heightBuf[3];
             Logger.Info($"Phone: {phoneWidth}x{phoneHeight}");
 
-            return new GardenServer(videoStream, controlStream, phoneWidth, phoneHeight);
+            return new GardenServer(videoClient, controlClient, videoStream, controlStream, phoneWidth, phoneHeight);
+        }
+
+        internal static void RemoveAdbForward()
+        {
+            RunAdb($"forward --remove tcp:{GardenServerPort}");
         }
 
         internal Process? Start()

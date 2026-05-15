@@ -1,10 +1,9 @@
 using NLog;
 using NLua;
-using System.Diagnostics;
 
 namespace Garden.Bots
 {
-    public class LuaBot
+    public class LuaBot : IDisposable
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
@@ -20,33 +19,27 @@ namespace Garden.Bots
             _lua = new Lua();
             _lua.State.Encoding = System.Text.Encoding.UTF8;
 
-            _lua["queueWait"]   = (Action<int>)(ms => _actionPlayer.QueueWait(ms));
-            _lua["waitMs"]      = (Action<int>)(ms => Thread.Sleep(ms));
-            _lua["getTimeInRoi"] = (Func<double>)(() => _roiWaitElapsed.TotalSeconds);
-            _lua["getOcrInt"]   = (Func<string, int>)(key => GetOcrInt(key));
-            _lua["queueAction"] = (Action<string>)(actionName => QueueAction(actionName, null));
+            _lua["queueWait"]     = (Action<int>)(ms => _actionPlayer.QueueWait(ms));
+            _lua["waitMs"]        = (Action<int>)(ms => Thread.Sleep(ms));
+            _lua["getOcrInt"]     = (Func<string, int>)(key => GetOcrInt(key));
+            _lua["queueAction"]   = (Action<string>)(actionName => QueueAction(actionName, null));
             _lua["queueActionAt"] = (Action<string, string>)((actionName, roiName) => QueueAction(actionName, roiName));
-            _lua["getRoiScore"] = (Func<string, double>)(roiName => GetRoiScore(roiName));
-            _lua["waitForRoi"]  = (Action<string>)(name => WaitForRoi(name));
+            _lua["getRoiScore"]   = (Func<string, double>)(roiName => GetRoiScore(roiName));
 
             _lua.DoFile(scriptPath);
         }
 
         private volatile bool _enabled = false;
-        private bool _skipMode = false;
-        private string? _skipTarget = null;
-        private TimeSpan _roiWaitElapsed = TimeSpan.Zero;
         private CancellationToken _runToken;
 
         private class BotRecoveryException : Exception { }
 
-        public void Enable()  => _enabled = true;
-        public void Disable() => _enabled = false;
+        public void Enable()   => _enabled = true;
+        public void Disable()  => _enabled = false;
+        public void Dispose()  => _lua.Dispose();
 
         private void QueueAction(string actionName, string? roiName)
         {
-            if (_skipMode) { return; }
-
             if (roiName == null)
             {
                 _actionPlayer.QueueReplay(actionName);
@@ -98,37 +91,11 @@ namespace Garden.Bots
             while (!token.IsCancellationRequested)
             {
                 if (!_enabled) { Thread.Sleep(100); continue; }
-                try { main.Call(); _skipMode = false; _skipTarget = null; }
+                try { main.Call(); }
                 catch (Exception ex) when (ex is BotRecoveryException || ex.InnerException is BotRecoveryException) { }
-                catch (Exception ex) { Logger.Error($"Bot error: {ex.Message}"); _skipMode = false; }
+                catch (Exception ex) { Logger.Error($"Bot error: {ex.Message}"); }
             }
         }
 
-        private void WaitForRoi(string name)
-        {
-            if (_skipMode)
-            {
-                if (name == _skipTarget) { _skipMode = false; _skipTarget = null; }
-                else { return; }
-            }
-
-            var sw = Stopwatch.StartNew();
-            while (sw.ElapsedMilliseconds < 8000 && !_runToken.IsCancellationRequested)
-            {
-                _roiWaitElapsed = sw.Elapsed;
-                if (_roiDetector.TryFindRoi(name, out RoiDetector.DetectedRoiInfo roiInfo))
-                {
-                    _roiDetector.ProcessReadAreas(name, roiInfo);
-                    return;
-                }
-                Thread.Sleep(50);
-            }
-
-            if (_runToken.IsCancellationRequested) { throw new BotRecoveryException(); }
-
-            string? found = _roiDetector.FindBestRoi(_roiDetector.GetAllRoiNames());
-            if (found != null) { _skipMode = true; _skipTarget = found; }
-            throw new BotRecoveryException();
-        }
     }
 }

@@ -119,6 +119,9 @@ namespace Garden
             mouseRecorder.Dispose();
             roiRecorder.Dispose();
             roiDetector.Dispose();
+            bot.Dispose();
+            gardenServer.Dispose();
+            ScrcpyManager.RemoveAdbForward();
             return;
         }
     }
