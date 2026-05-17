@@ -25,18 +25,23 @@ namespace Garden.Bots
             _lua["queueAction"]   = (Action<string>)(actionName => QueueAction(actionName, null));
             _lua["queueActionAt"] = (Action<string, string>)((actionName, roiName) => QueueAction(actionName, roiName));
             _lua["getRoiScore"]   = (Func<string, double>)(roiName => GetRoiScore(roiName));
+            _lua["roiVisible"]    = (Func<string, bool>)(name => RoiVisible(name));
 
             _lua.DoFile(scriptPath);
         }
 
         private volatile bool _enabled = false;
-        private CancellationToken _runToken;
-
-        private class BotRecoveryException : Exception { }
 
         public void Enable()   => _enabled = true;
         public void Disable()  => _enabled = false;
         public void Dispose()  => _lua.Dispose();
+
+        private bool RoiVisible(string name)
+        {
+            bool found = _roiDetector.TryFindRoi(name, out RoiDetector.DetectedRoiInfo roiInfo);
+            if (found) { _roiDetector.ProcessReadAreas(name, roiInfo); }
+            return found;
+        }
 
         private void QueueAction(string actionName, string? roiName)
         {
@@ -87,13 +92,12 @@ namespace Garden.Bots
                 return;
             }
 
-            _runToken = token;
             while (!token.IsCancellationRequested)
             {
                 if (!_enabled) { Thread.Sleep(100); continue; }
                 try { main.Call(); }
-                catch (Exception ex) when (ex is BotRecoveryException || ex.InnerException is BotRecoveryException) { }
                 catch (Exception ex) { Logger.Error($"Bot error: {ex.Message}"); }
+                Thread.Sleep(100);
             }
         }
 

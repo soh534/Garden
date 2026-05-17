@@ -9,6 +9,7 @@ namespace Garden
         private bool _isPathRecording = false;
         private bool _isMouseDown = false;
         private DateTime _lastMoveTime = DateTime.MinValue;
+        private string? _pendingName = null;
 
         public MouseEventRecorder(string saveDirectory) : base(WindowType.Garden)
         {
@@ -16,14 +17,15 @@ namespace Garden
             _saveDirectory = saveDirectory;
         }
 
-        public void StartRecording(bool isPath)
+        public void StartRecording(bool isPath, string name)
         {
             if (!_isRecording)
             {
                 _recordedEvents.Clear();
                 _isPathRecording = isPath;
+                _pendingName = name;
                 base.StartRecording();
-                Console.WriteLine("Mouse recording started...");
+                Console.WriteLine($"Mouse recording started ({name})...");
             }
             else
             {
@@ -38,6 +40,7 @@ namespace Garden
                 base.StopRecording();
                 _isPathRecording = false;
                 Console.WriteLine($"Mouse recording stopped. Recorded {_recordedEvents.Count} events.");
+                if (_pendingName != null) { SaveRecording(_pendingName); _pendingName = null; }
             }
         }
 
@@ -55,7 +58,7 @@ namespace Garden
             }
         }
 
-        public void SaveRecording(string actionName)
+        private void SaveRecording(string actionName)
         {
             // Auto-end recording if still active
             if (_isRecording)

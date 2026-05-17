@@ -61,13 +61,17 @@ namespace Garden
                     {
                         case "record":
                             bool isPath = parts.Length > 2 && parts[2].ToLowerInvariant() == "path";
-                            _mouseRecorder.StartRecording(isPath);
+                            string? recName = isPath
+                                ? (parts.Length > 3 ? string.Join(' ', parts.Skip(3)).Trim() : null)
+                                : (parts.Length > 2 ? string.Join(' ', parts.Skip(2)).Trim() : null);
+                            if (recName == null) { Console.WriteLine("Usage: action record <name>  |  action record path <name>"); break; }
+                            _mouseRecorder.StartRecording(isPath, recName);
                             break;
                         case "reset":
                             _mouseRecorder.ResetRecording();
                             break;
-                        case "save":
-                            HandleMouseRecordSaveCommand(command);
+                        case "stop":
+                            _mouseRecorder.StopRecording();
                             break;
                         case "replay":
                             HandleRunActionCommand(command);
@@ -118,10 +122,10 @@ namespace Garden
         {
             Console.WriteLine("\nAvailable commands:");
             Console.WriteLine("  image save <filename.png>   - Save screenshot");
-            Console.WriteLine("  action record               - Start recording mouse clicks (linear)");
-            Console.WriteLine("  action record path          - Start recording mouse path");
+            Console.WriteLine("  action record <name>        - Start recording mouse clicks (linear)");
+            Console.WriteLine("  action record path <name>   - Start recording mouse path");
             Console.WriteLine("  action reset                - Clear recorded events (stay recording)");
-            Console.WriteLine("  action save <name>          - Save recorded clicks & end recording");
+            Console.WriteLine("  action stop                 - Stop recording and save");
             Console.WriteLine("  action replay <filename>    - Replay recorded clicks");
             Console.WriteLine("  roi record <name>           - Record an ROI and save it as <name>");
             Console.WriteLine("  roi stop                    - Cancel ROI recording");
@@ -153,20 +157,6 @@ namespace Garden
             else
             {
                 Logger.Info("Usage: image save filename.png");
-            }
-        }
-
-        private void HandleMouseRecordSaveCommand(string command)
-        {
-            var parts = command.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 3)
-            {
-                string actionName = parts[2].Trim();
-                _mouseRecorder.SaveRecording(actionName);
-            }
-            else
-            {
-                Logger.Info("Usage: action save <name>");
             }
         }
 
