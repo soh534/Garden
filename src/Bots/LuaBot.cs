@@ -13,6 +13,7 @@ namespace Garden.Bots
 
         public LuaBot(string scriptPath, RoiDetector roiDetector, ActionPlayer actionPlayer)
         {
+            _scriptPath = scriptPath;
             _roiDetector = roiDetector;
             _actionPlayer = actionPlayer;
 
@@ -28,13 +29,49 @@ namespace Garden.Bots
             _lua["roiVisible"]    = (Func<string, bool>)(name => RoiVisible(name));
 
             _lua.DoFile(scriptPath);
+
+            _watcher = new FileSystemWatcher(Path.GetDirectoryName(scriptPath)!, Path.GetFileName(scriptPath))
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
+                EnableRaisingEvents = true
+            };
+            _watcher.Changed += OnScriptFileChanged;
+            _watcher.Created += OnScriptFileChanged;
+            _watcher.Renamed += (_, _) => OnScriptFileChanged(null, null!);
         }
 
+        private readonly string _scriptPath;
         private volatile bool _enabled = false;
+        private volatile bool _reloadPending = false;
+        private readonly FileSystemWatcher _watcher;
+        private DateTime _lastWatcherEvent = DateTime.MinValue;
 
         public void Enable()   => _enabled = true;
         public void Disable()  => _enabled = false;
-        public void Dispose()  => _lua.Dispose();
+
+        public void Dispose()
+        {
+            _watcher.Dispose();
+            _lua.Dispose();
+        }
+
+        private void OnScriptFileChanged(object? sender, FileSystemEventArgs e)
+        {
+            if ((DateTime.UtcNow - _lastWatcherEvent).TotalMilliseconds < 500) { return; }
+            _lastWatcherEvent = DateTime.UtcNow;
+            _reloadPending = true;
+        }
+
+        private void ReloadScript()
+        {
+            try
+            {
+                _lua.DoFile(_scriptPath);
+                _reloadPending = false;
+                Console.WriteLine("[LuaBot] gardenbot.lua reloaded.");
+            }
+            catch (Exception ex) { Logger.Error($"Reload failed: {ex.Message}"); }
+        }
 
         private bool RoiVisible(string name)
         {
@@ -94,8 +131,14 @@ namespace Garden.Bots
 
             while (!token.IsCancellationRequested)
             {
+                if (_reloadPending)
+                {
+                    ReloadScript();
+                    main = _lua["main"] as LuaFunction;
+                    if (main == null) { Logger.Error("No main() after reload"); Thread.Sleep(500); continue; }
+                }
                 if (!_enabled) { Thread.Sleep(100); continue; }
-                try { main.Call(); }
+                try { main!.Call(); }
                 catch (Exception ex) { Logger.Error($"Bot error: {ex.Message}"); }
                 Thread.Sleep(100);
             }

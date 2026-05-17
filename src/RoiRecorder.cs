@@ -31,6 +31,7 @@ namespace Garden
         }
 
         private readonly string _saveDirectory;
+        private readonly string _imageSaveDirectory;
         private readonly BlockingCollection<string> _promptInput = new();
         private readonly CancellationTokenSource _cts = new();
         private int _startX, _startY;
@@ -43,16 +44,17 @@ namespace Garden
         private volatile bool _captureReady = false;
         private Mat? _currentFrame = null;
 
-        private record RoiCapture(Mat RoiMat, int X, int Y, int Width, int Height, int FrameWidth, int FrameHeight, string? PendingName);
+        private record RoiCapture(Mat RoiMat, Mat FullFrame, int X, int Y, int Width, int Height, int FrameWidth, int FrameHeight, string? PendingName);
         private readonly BlockingCollection<RoiCapture> _captureQueue = new(boundedCapacity: 1);
 
         public bool IsRecording => _isRecording;
         public bool IsPrompting => _isPrompting;
         public void FeedInput(string input) => _promptInput.Add(input);
 
-        public RoiRecorder(string saveDirectory) : base(WindowType.CapturedFrame)
+        public RoiRecorder(string saveDirectory, string imageSaveDirectory) : base(WindowType.CapturedFrame)
         {
             _saveDirectory = saveDirectory;
+            _imageSaveDirectory = imageSaveDirectory;
             new Thread(WorkerLoop) { IsBackground = true, Name = "RoiRecorder.Worker" }.Start();
         }
 
@@ -63,7 +65,7 @@ namespace Garden
                 foreach (var capture in _captureQueue.GetConsumingEnumerable(_cts.Token))
                 {
                     _isPrompting = true;
-                    try { PromptAndSaveRoi(capture.RoiMat, capture.X, capture.Y, capture.Width, capture.Height, capture.FrameWidth, capture.FrameHeight, capture.PendingName); }
+                    try { PromptAndSaveRoi(capture.RoiMat, capture.FullFrame, capture.X, capture.Y, capture.Width, capture.Height, capture.FrameWidth, capture.FrameHeight, capture.PendingName); }
                     finally { _isPrompting = false; }
                     if (capture.PendingName != null) { StopRecording(); }
                 }
@@ -71,7 +73,7 @@ namespace Garden
             catch (OperationCanceledException) { }
         }
 
-        public new void StartRecording(string? name = null)
+        public void StartRecording(string? name = null)
         {
             if (!_isRecording)
             {
@@ -162,11 +164,13 @@ namespace Garden
                         int frameHeight = _currentFrame.Height;
                         var pendingName = _pendingName;
                         _pendingName = null;
-                        var capture = new RoiCapture(roiMat, fx, fy, fw, fh, frameWidth, frameHeight, pendingName);
+                        var fullFrameSnapshot = _currentFrame.Clone();
+                        var capture = new RoiCapture(roiMat, fullFrameSnapshot, fx, fy, fw, fh, frameWidth, frameHeight, pendingName);
                         if (!_captureQueue.TryAdd(capture))
                         {
                             Console.WriteLine("ROI recording busy, finish current ROI first.");
                             roiMat.Dispose();
+                            fullFrameSnapshot.Dispose();
                         }
                     }
                 }
@@ -184,7 +188,7 @@ namespace Garden
             return (_startX, _startY, _currentX, _currentY);
         }
 
-        private void PromptAndSaveRoi(Mat roiMat, int x, int y, int width, int height, int frameWidth, int frameHeight, string? pendingName = null)
+        private void PromptAndSaveRoi(Mat roiMat, Mat fullFrame, int x, int y, int width, int height, int frameWidth, int frameHeight, string? pendingName = null)
         {
             string roiName;
             if (pendingName != null)
@@ -268,8 +272,13 @@ namespace Garden
 
             Cv2.ImWrite(filePath, roiMat);
             Console.WriteLine($"ROI saved to {filePath} (type: {roiType})");
+            Directory.CreateDirectory(_imageSaveDirectory);
+            string framePath = Path.Combine(_imageSaveDirectory, $"frame_{roiName}.png");
+            Cv2.ImWrite(framePath, fullFrame);
+            Console.WriteLine($"Frame saved to {framePath}");
 
             roiMat.Dispose();
+            fullFrame.Dispose();
             SaveRoiData(roiName, roiType, clickOffsetX, clickOffsetY, readAreas, x, y, width, height, frameWidth, frameHeight);
         }
 

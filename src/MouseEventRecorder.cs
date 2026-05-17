@@ -60,12 +60,6 @@ namespace Garden
 
         private void SaveRecording(string actionName)
         {
-            // Auto-end recording if still active
-            if (_isRecording)
-            {
-                StopRecording();
-            }
-
             if (_recordedEvents.Count == 0)
             {
                 Console.WriteLine("No mouse events to save.");

@@ -57,6 +57,7 @@ namespace Garden
         private Dictionary<string, (Point[] contour, double area)> _contourRefs = new();
         private FileSystemWatcher _fileWatcher = null!;
         private readonly object _roiMatsLock = new();
+        private DateTime _lastWatcherEvent = DateTime.MinValue;
 
         private Mat? _latestFrame;
         private readonly object _frameLock = new();
@@ -280,9 +281,12 @@ namespace Garden
 
         private void OnRoiDataFileChanged(object sender, FileSystemEventArgs e)
         {
-            Logger.Info("roi_metadata.json changed, reloading...");
+            if ((DateTime.UtcNow - _lastWatcherEvent).TotalMilliseconds < 500) { return; }
+            _lastWatcherEvent = DateTime.UtcNow;
+            Console.WriteLine("[RoiDetector] roi_metadata.json changed, reloading...");
             Thread.Sleep(100);
             Reload();
+            Console.WriteLine("[RoiDetector] Reload complete.");
         }
 
         private void LoadRoiData()
