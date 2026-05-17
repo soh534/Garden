@@ -352,6 +352,8 @@ namespace Garden
 
                     string imagePath = Path.Combine(_saveDirectory, $"{roiName}.png");
                     if (File.Exists(imagePath)) { File.Delete(imagePath); }
+                    string framePath = Path.Combine(_imageSaveDirectory, $"frame_{roiName}.png");
+                    if (File.Exists(framePath)) { File.Delete(framePath); }
                     Console.WriteLine($"Removed ROI '{roiName}'");
                 }
                 else
