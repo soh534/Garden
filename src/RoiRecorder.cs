@@ -46,6 +46,8 @@ namespace Garden
 
         private record RoiCapture(Mat RoiMat, Mat FullFrame, int X, int Y, int Width, int Height, int FrameWidth, int FrameHeight, string? PendingName);
         private readonly BlockingCollection<RoiCapture> _captureQueue = new(boundedCapacity: 1);
+        private RoiCapture? _pendingRestart = null;
+        private volatile CancellationTokenSource? _restartCts = null;
 
         public bool IsRecording => _isRecording;
         public bool IsPrompting => _isPrompting;
@@ -62,12 +64,43 @@ namespace Garden
         {
             try
             {
-                foreach (var capture in _captureQueue.GetConsumingEnumerable(_cts.Token))
+                while (!_cts.Token.IsCancellationRequested)
                 {
-                    _isPrompting = true;
-                    try { PromptAndSaveRoi(capture.RoiMat, capture.FullFrame, capture.X, capture.Y, capture.Width, capture.Height, capture.FrameWidth, capture.FrameHeight, capture.PendingName); }
-                    finally { _isPrompting = false; }
-                    if (capture.PendingName != null) { StopRecording(); }
+                    RoiCapture? capture;
+                    try { capture = _captureQueue.Take(_cts.Token); }
+                    catch (OperationCanceledException) { break; }
+
+                    while (capture != null && !_cts.Token.IsCancellationRequested)
+                    {
+                        _restartCts = new CancellationTokenSource();
+                        _isPrompting = true;
+                        bool restarted = false;
+                        try
+                        {
+                            PromptAndSaveRoi(capture.RoiMat, capture.FullFrame, capture.X, capture.Y, capture.Width, capture.Height, capture.FrameWidth, capture.FrameHeight, capture.PendingName, _restartCts.Token);
+                        }
+                        catch (OperationCanceledException) when (_restartCts.IsCancellationRequested)
+                        {
+                            restarted = true;
+                        }
+                        finally
+                        {
+                            _isPrompting = false;
+                            _restartCts.Dispose();
+                            _restartCts = null;
+                        }
+
+                        if (restarted)
+                        {
+                            capture = Interlocked.Exchange(ref _pendingRestart, null);
+                            if (capture != null) { Console.WriteLine("Restarting with new selection..."); }
+                        }
+                        else
+                        {
+                            if (capture.PendingName != null) { StopRecording(); }
+                            capture = null;
+                        }
+                    }
                 }
             }
             catch (OperationCanceledException) { }
@@ -166,7 +199,16 @@ namespace Garden
                         _pendingName = null;
                         var fullFrameSnapshot = _currentFrame.Clone();
                         var capture = new RoiCapture(roiMat, fullFrameSnapshot, fx, fy, fw, fh, frameWidth, frameHeight, pendingName);
-                        if (!_captureQueue.TryAdd(capture))
+
+                        if (_isPrompting)
+                        {
+                            var old = Interlocked.Exchange(ref _pendingRestart, capture);
+                            old?.RoiMat.Dispose();
+                            old?.FullFrame.Dispose();
+                            _restartCts?.Cancel();
+                            Console.WriteLine("Selection updated, restarting...");
+                        }
+                        else if (!_captureQueue.TryAdd(capture))
                         {
                             Console.WriteLine("ROI recording busy, finish current ROI first.");
                             roiMat.Dispose();
@@ -178,18 +220,25 @@ namespace Garden
             }
         }
 
-        private (int startX, int startY, int endX, int endY) WaitForCapture(CaptureMode mode)
+        private (int startX, int startY, int endX, int endY) WaitForCapture(CaptureMode mode, CancellationToken restartToken)
         {
             _hasStartPoint = false;
             _captureReady = false;
             _captureMode = mode;
-            while (!_captureReady) { Thread.Sleep(50); }
+            while (!_captureReady)
+            {
+                restartToken.ThrowIfCancellationRequested();
+                Thread.Sleep(50);
+            }
             _captureMode = CaptureMode.None;
             return (_startX, _startY, _currentX, _currentY);
         }
 
-        private void PromptAndSaveRoi(Mat roiMat, Mat fullFrame, int x, int y, int width, int height, int frameWidth, int frameHeight, string? pendingName = null)
+        private void PromptAndSaveRoi(Mat roiMat, Mat fullFrame, int x, int y, int width, int height, int frameWidth, int frameHeight, string? pendingName, CancellationToken restartToken)
         {
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, restartToken);
+            CancellationToken token = linked.Token;
+
             string roiName;
             if (pendingName != null)
             {
@@ -199,7 +248,7 @@ namespace Garden
             else
             {
                 Console.Write("Enter ROI name: ");
-                roiName = _promptInput.Take(_cts.Token);
+                roiName = _promptInput.Take(token);
             }
 
             if (string.IsNullOrWhiteSpace(roiName))
@@ -210,19 +259,19 @@ namespace Garden
             }
 
             Console.Write("Contour detection? (y/n): ");
-            string typeInput = _promptInput.Take(_cts.Token);
+            string typeInput = _promptInput.Take(token);
 
             string roiType = typeInput.Trim().ToLower() == "y" ? "contour" : "template";
 
             Console.Write("Set click point? (y/n): ");
-            string clickPointInput = _promptInput.Take(_cts.Token);
+            string clickPointInput = _promptInput.Take(token);
 
             int? clickOffsetX = null;
             int? clickOffsetY = null;
             if (clickPointInput.Trim().ToLower() == "y")
             {
                 Console.WriteLine("Click the target point anywhere on the frame...");
-                var (sx, sy, _, _) = WaitForCapture(CaptureMode.ClickPoint);
+                var (sx, sy, _, _) = WaitForCapture(CaptureMode.ClickPoint, restartToken);
                 var (fsx, fsy) = ScaleToFrame(sx, sy);
                 clickOffsetX = fsx - x;
                 clickOffsetY = fsy - y;
@@ -231,12 +280,12 @@ namespace Garden
 
             var readAreas = new List<RoiData.ReadArea>();
             Console.Write("Add read area? (y/n): ");
-            string? addReadAreaInput = _promptInput.Take(_cts.Token);
+            string? addReadAreaInput = _promptInput.Take(token);
 
             while (addReadAreaInput?.Trim().ToLower() == "y")
             {
                 Console.WriteLine("Draw read area on frame (drag to select)...");
-                var (raStartX, raStartY, raEndX, raEndY) = WaitForCapture(CaptureMode.BoundingBox);
+                var (raStartX, raStartY, raEndX, raEndY) = WaitForCapture(CaptureMode.BoundingBox, restartToken);
                 var (fx1, fy1) = ScaleToFrame(Math.Min(raStartX, raEndX), Math.Min(raStartY, raEndY));
                 var (fx2, fy2) = ScaleToFrame(Math.Max(raStartX, raEndX), Math.Max(raStartY, raEndY));
                 int raX = fx1 - x;
@@ -245,7 +294,7 @@ namespace Garden
                 int raH = fy2 - fy1;
 
                 Console.Write("Enter read area name: ");
-                string? readAreaName = _promptInput.Take(_cts.Token);
+                string? readAreaName = _promptInput.Take(token);
 
                 if (!string.IsNullOrWhiteSpace(readAreaName))
                 {
@@ -265,7 +314,7 @@ namespace Garden
                 }
 
                 Console.Write("Add another read area? (y/n): ");
-                addReadAreaInput = _promptInput.Take(_cts.Token);
+                addReadAreaInput = _promptInput.Take(token);
             }
 
             string filePath = Path.Combine(_saveDirectory, $"{roiName}.png");
