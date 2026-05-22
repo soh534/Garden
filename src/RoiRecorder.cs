@@ -196,7 +196,6 @@ namespace Garden
                         int frameWidth  = _currentFrame.Width;
                         int frameHeight = _currentFrame.Height;
                         var pendingName = _pendingName;
-                        _pendingName = null;
                         var fullFrameSnapshot = _currentFrame.Clone();
                         var capture = new RoiCapture(roiMat, fullFrameSnapshot, fx, fy, fw, fh, frameWidth, frameHeight, pendingName);
 
