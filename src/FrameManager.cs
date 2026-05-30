@@ -228,6 +228,7 @@ namespace Garden
                         DrawDetectedRois(displayFrame, snapshot);
                         DrawReadAreas(displayFrame, snapshot);
                         DrawBotStatus(displayFrame, snapshot);
+                        DrawRoiScores(displayFrame, snapshot);
                         DrawProfiler(displayFrame, snapshot);
                     }
                     Cv2.ImShow("Captured Frame", displayFrame);
@@ -325,6 +326,20 @@ namespace Garden
             {
                 Cv2.PutText(frame, $"  ocr {key}: {val}",
                     new OpenCvSharp.Point(10, y), HersheyFonts.HersheySimplex, 0.5, Scalar.Cyan, 2);
+                y += 20;
+            }
+        }
+
+        private void DrawRoiScores(Mat frame, RoiDetector.DetectionSnapshot snapshot)
+        {
+            int x = 10;
+            int y = 60;
+            foreach (var (name, score) in snapshot.LatestScores)
+            {
+                bool detected = score < RoiDetector.TemplateThreshold;
+                Scalar color = detected ? Scalar.LimeGreen : Scalar.Black;
+                Cv2.PutText(frame, $"{name} {score:F4}", new OpenCvSharp.Point(x, y),
+                    HersheyFonts.HersheySimplex, 0.5, color, 2);
                 y += 20;
             }
         }

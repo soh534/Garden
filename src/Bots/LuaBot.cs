@@ -82,6 +82,7 @@ namespace Garden.Bots
 
         private void QueueAction(string actionName, string? roiName)
         {
+            if (!_enabled) { return; }
             if (roiName == null)
             {
                 _actionPlayer.QueueReplay(actionName);
@@ -137,7 +138,6 @@ namespace Garden.Bots
                     main = _lua["main"] as LuaFunction;
                     if (main == null) { Logger.Error("No main() after reload"); Thread.Sleep(500); continue; }
                 }
-                if (!_enabled) { Thread.Sleep(100); continue; }
                 try { main!.Call(); }
                 catch (Exception ex) { Logger.Error($"Bot error: {ex.Message}"); }
                 Thread.Sleep(100);

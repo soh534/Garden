@@ -43,10 +43,11 @@ namespace Garden
             string? WaitingForRoi,
             DetectedRoiInfo? WaitingRoiResult,
             Dictionary<string, int> OcrReadings,
-            Dictionary<string, Rect> ReadAreaRects
+            Dictionary<string, Rect> ReadAreaRects,
+            Dictionary<string, double> LatestScores
         );
 
-        private const double TemplateThreshold = 0.02;
+        public const double TemplateThreshold = 0.003;
         private const double ContourDetectionThreshold = 0.7;
 
         private readonly string _roiDirectory;
@@ -62,7 +63,7 @@ namespace Garden
         private Mat? _latestFrame;
         private readonly object _frameLock = new();
 
-        private volatile DetectionSnapshot _snapshot = new(null, null, new(), new());
+        private volatile DetectionSnapshot _snapshot = new(null, null, new(), new(), new());
         public DetectionSnapshot Snapshot => _snapshot;
 
         public RoiDetector(string roiDirectory, string debugDir)
@@ -104,7 +105,8 @@ namespace Garden
             try
             {
                 bool found = TryFindRoiInFrame(frame, name, out info);
-                _snapshot = new DetectionSnapshot(name, found ? info : null, _snapshot.OcrReadings, _snapshot.ReadAreaRects);
+                var scores = new Dictionary<string, double>(_snapshot.LatestScores) { [name] = info.Score };
+                _snapshot = new DetectionSnapshot(name, found ? info : null, _snapshot.OcrReadings, _snapshot.ReadAreaRects, scores);
                 return found;
             }
             finally
@@ -241,7 +243,7 @@ namespace Garden
                         ocrReadings[key] = _ocrReader.ReadInt(readMat);
                     }
 
-                    _snapshot = new DetectionSnapshot(_snapshot.WaitingForRoi, _snapshot.WaitingRoiResult, ocrReadings, readAreaRects);
+                    _snapshot = new DetectionSnapshot(_snapshot.WaitingForRoi, _snapshot.WaitingRoiResult, ocrReadings, readAreaRects, _snapshot.LatestScores);
                 }
             }
             finally
