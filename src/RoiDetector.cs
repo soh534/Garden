@@ -45,7 +45,7 @@ namespace Garden
             Dictionary<string, (double Score, bool Detected, int CenterX, int CenterY)> LatestScores
         );
 
-        public const double TemplateThreshold = 0.003;
+        public const double TemplateThreshold = 0.01;
         public const double ContourDetectionThreshold = 0.7;
 
         private readonly string _roiDirectory;
