@@ -295,23 +295,32 @@ namespace Garden
             }
         }
 
+        private static readonly Scalar[] DetectedColors =
+        {
+            Scalar.LimeGreen,
+            Scalar.Orange,
+            Scalar.Magenta,
+            Scalar.Cyan,
+            Scalar.Yellow,
+        };
+
         private void DrawDetectedRois(Mat frame, RoiDetector.DetectionSnapshot snapshot)
         {
-            if (snapshot.WaitingRoiResult == null) { return; }
-            var roiInfo = snapshot.WaitingRoiResult.Value;
-            Mat? roiMat = _roiDetector.GetRoiMat(roiInfo.RoiName);
-            if (roiMat == null) { return; }
-
-            var (cx, cy)       = InputManager.PhoneToDisplay(roiInfo.Center.X, roiInfo.Center.Y, frame.Width, frame.Height);
-            var (dispW, dispH) = InputManager.PhoneToDisplay(roiMat.Width, roiMat.Height, frame.Width, frame.Height);
-            Rect box = new Rect(cx - dispW / 2, cy - dispH / 2, dispW, dispH);
-            Cv2.Rectangle(frame, box, Scalar.Blue, 2);
-            Cv2.PutText(frame, roiInfo.RoiName,
-                new OpenCvSharp.Point(box.X, box.Y - 20),
-                HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 2);
-            Cv2.PutText(frame, $"{roiInfo.Score:F3}",
-                new OpenCvSharp.Point(box.X, box.Y - 5),
-                HersheyFonts.HersheySimplex, 0.4, Scalar.Blue, 2);
+            int colorIdx = 0;
+            foreach (var (name, (score, detected, cx, cy)) in snapshot.LatestScores)
+            {
+                if (!detected) { continue; }
+                Scalar color = DetectedColors[colorIdx++ % DetectedColors.Length];
+                Mat? roiMat = _roiDetector.GetRoiMat(name);
+                if (roiMat == null) { continue; }
+                var (dispCx, dispCy) = InputManager.PhoneToDisplay(cx, cy, frame.Width, frame.Height);
+                var (dispW, dispH)   = InputManager.PhoneToDisplay(roiMat.Width, roiMat.Height, frame.Width, frame.Height);
+                Rect box = new Rect(dispCx - dispW / 2, dispCy - dispH / 2, dispW, dispH);
+                Cv2.Rectangle(frame, box, color, 2);
+                Cv2.PutText(frame, $"{name} {score:F4}",
+                    new OpenCvSharp.Point(box.X, box.Y - 5),
+                    HersheyFonts.HersheySimplex, 0.4, color, 1);
+            }
         }
 
         private void DrawProfiler(Mat frame, RoiDetector.DetectionSnapshot snapshot)
@@ -334,10 +343,10 @@ namespace Garden
         {
             int x = 10;
             int y = 60;
-            foreach (var (name, score) in snapshot.LatestScores)
+            int colorIdx = 0;
+            foreach (var (name, (score, detected, _, _)) in snapshot.LatestScores)
             {
-                bool detected = score < RoiDetector.TemplateThreshold;
-                Scalar color = detected ? Scalar.LimeGreen : Scalar.Black;
+                Scalar color = detected ? DetectedColors[colorIdx++ % DetectedColors.Length] : Scalar.Black;
                 Cv2.PutText(frame, $"{name} {score:F4}", new OpenCvSharp.Point(x, y),
                     HersheyFonts.HersheySimplex, 0.5, color, 2);
                 y += 20;

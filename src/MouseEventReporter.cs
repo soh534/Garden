@@ -14,6 +14,7 @@ namespace Garden
             public int Y { get; set; } // Relative to scrcpy window client area
             public bool IsMouseDown { get; set; } // true for down, false for up
             public bool IsMouseMove { get; set; } = false;
+            public bool IsRightClick { get; set; } = false;
         }
 
         // Events
@@ -112,31 +113,27 @@ namespace Garden
                     switch ((int)wParam)
                     {
                         case Win32Api.WM_LBUTTONDOWN:
-                            var downEvent = new MouseEvent
-                            {
-                                Timestamp = DateTime.Now,
-                                X = windowX,
-                                Y = windowY,
-                                IsMouseDown = true
-                            };
-
-                            // Fire MouseDown event
+                            var downEvent = new MouseEvent { Timestamp = DateTime.Now, X = windowX, Y = windowY, IsMouseDown = true };
                             MouseClickCallback?.Invoke(this, downEvent);
                             Logger.Info($"Left button down at ({windowX}, {windowY})");
                             break;
 
                         case Win32Api.WM_LBUTTONUP:
-                            var upEvent = new MouseEvent
-                            {
-                                Timestamp = DateTime.Now,
-                                X = windowX,
-                                Y = windowY,
-                                IsMouseDown = false
-                            };
-
-                            // Fire MouseUp event
+                            var upEvent = new MouseEvent { Timestamp = DateTime.Now, X = windowX, Y = windowY, IsMouseDown = false };
                             MouseClickCallback?.Invoke(this, upEvent);
                             Logger.Info($"Left button up at ({windowX}, {windowY})");
+                            break;
+
+                        case Win32Api.WM_RBUTTONDOWN:
+                            var rDownEvent = new MouseEvent { Timestamp = DateTime.Now, X = windowX, Y = windowY, IsMouseDown = true, IsRightClick = true };
+                            MouseClickCallback?.Invoke(this, rDownEvent);
+                            Logger.Info($"Right button down at ({windowX}, {windowY})");
+                            break;
+
+                        case Win32Api.WM_RBUTTONUP:
+                            var rUpEvent = new MouseEvent { Timestamp = DateTime.Now, X = windowX, Y = windowY, IsMouseDown = false, IsRightClick = true };
+                            MouseClickCallback?.Invoke(this, rUpEvent);
+                            Logger.Info($"Right button up at ({windowX}, {windowY})");
                             break;
 
                         case Win32Api.WM_MOUSEMOVE:

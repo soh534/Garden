@@ -81,7 +81,8 @@ namespace Garden
                 X = e.X / w,
                 Y = e.Y / h,
                 e.IsMouseDown,
-                e.IsMouseMove
+                e.IsMouseMove,
+                e.IsRightClick
             });
             string jsonString = JsonSerializer.Serialize(stored, options);
             File.WriteAllText(filePath, jsonString);

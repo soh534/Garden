@@ -21,6 +21,7 @@ namespace Garden
             public int Y { get; set; } // Window-relative coordinates
             public bool IsMouseDown { get; set; } // true for down, false for up
             public bool IsMouseMove { get; set; } = false;
+            public bool IsRightClick { get; set; } = false;
             public bool IsFirstInBatch { get; set; } = false;
             public int WaitMs { get; set; } = 0;
         }
@@ -53,6 +54,7 @@ namespace Garden
             public double Y { get; set; }
             public bool IsMouseDown { get; set; }
             public bool IsMouseMove { get; set; }
+            public bool IsRightClick { get; set; }
         }
 
         private List<MouseEvent>? LoadAction(string actionName)
@@ -87,7 +89,8 @@ namespace Garden
                     X = (int)(e.X * w),
                     Y = (int)(e.Y * h),
                     IsMouseDown = e.IsMouseDown,
-                    IsMouseMove = e.IsMouseMove
+                    IsMouseMove = e.IsMouseMove,
+                    IsRightClick = e.IsRightClick
                 }).ToList();
             }
             catch (Exception ex)
@@ -220,9 +223,16 @@ namespace Garden
             // 3. Click if it's time
             if (actionToExecute != null && !actionToExecute.IsMouseMove)
             {
-                InputManager.SendTouch(
-                    actionToExecute.IsMouseDown ? InputManager.TOUCH_DOWN : InputManager.TOUCH_UP,
-                    actionToExecute.X, actionToExecute.Y);
+                if (actionToExecute.IsRightClick)
+                {
+                    if (actionToExecute.IsMouseDown) { InputManager.SendKey(InputManager.AKEYCODE_BACK); }
+                }
+                else
+                {
+                    InputManager.SendTouch(
+                        actionToExecute.IsMouseDown ? InputManager.TOUCH_DOWN : InputManager.TOUCH_UP,
+                        actionToExecute.X, actionToExecute.Y);
+                }
             }
 
             // Clear queue after having emptied

@@ -13,8 +13,6 @@ namespace Garden
             public int y { get; set; }
             public int width { get; set; }
             public int height { get; set; }
-            public int frameWidth { get; set; }
-            public int frameHeight { get; set; }
             public string roiType { get; set; } = "template";
             public int? clickOffsetX { get; set; } = null;
             public int? clickOffsetY { get; set; } = null;
@@ -44,7 +42,7 @@ namespace Garden
         private volatile bool _captureReady = false;
         private Mat? _currentFrame = null;
 
-        private record RoiCapture(Mat RoiMat, Mat FullFrame, int X, int Y, int Width, int Height, int FrameWidth, int FrameHeight, string? PendingName);
+        private record RoiCapture(Mat RoiMat, Mat FullFrame, int X, int Y, int Width, int Height, string? PendingName);
         private readonly BlockingCollection<RoiCapture> _captureQueue = new(boundedCapacity: 1);
         private RoiCapture? _pendingRestart = null;
         private volatile CancellationTokenSource? _restartCts = null;
@@ -77,7 +75,7 @@ namespace Garden
                         bool restarted = false;
                         try
                         {
-                            PromptAndSaveRoi(capture.RoiMat, capture.FullFrame, capture.X, capture.Y, capture.Width, capture.Height, capture.FrameWidth, capture.FrameHeight, capture.PendingName, _restartCts.Token);
+                            PromptAndSaveRoi(capture.RoiMat, capture.FullFrame, capture.X, capture.Y, capture.Width, capture.Height, capture.PendingName, _restartCts.Token);
                         }
                         catch (OperationCanceledException) when (_restartCts.IsCancellationRequested)
                         {
@@ -193,11 +191,9 @@ namespace Garden
                         int fw = fx2 - fx, fh = fy2 - fy;
                         Rect roi   = new Rect(fx, fy, fw, fh);
                         Mat roiMat = new Mat(_currentFrame, roi);
-                        int frameWidth  = _currentFrame.Width;
-                        int frameHeight = _currentFrame.Height;
                         var pendingName = _pendingName;
                         var fullFrameSnapshot = _currentFrame.Clone();
-                        var capture = new RoiCapture(roiMat, fullFrameSnapshot, fx, fy, fw, fh, frameWidth, frameHeight, pendingName);
+                        var capture = new RoiCapture(roiMat, fullFrameSnapshot, fx, fy, fw, fh, pendingName);
 
                         if (_isPrompting)
                         {
@@ -233,7 +229,7 @@ namespace Garden
             return (_startX, _startY, _currentX, _currentY);
         }
 
-        private void PromptAndSaveRoi(Mat roiMat, Mat fullFrame, int x, int y, int width, int height, int frameWidth, int frameHeight, string? pendingName, CancellationToken restartToken)
+        private void PromptAndSaveRoi(Mat roiMat, Mat fullFrame, int x, int y, int width, int height, string? pendingName, CancellationToken restartToken)
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, restartToken);
             CancellationToken token = linked.Token;
@@ -327,10 +323,10 @@ namespace Garden
 
             roiMat.Dispose();
             fullFrame.Dispose();
-            SaveRoiData(roiName, roiType, clickOffsetX, clickOffsetY, readAreas, x, y, width, height, frameWidth, frameHeight);
+            SaveRoiData(roiName, roiType, clickOffsetX, clickOffsetY, readAreas, x, y, width, height);
         }
 
-        private void SaveRoiData(string roiName, string roiType, int? clickOffsetX, int? clickOffsetY, List<RoiData.ReadArea> readAreas, int x, int y, int width, int height, int frameWidth, int frameHeight)
+        private void SaveRoiData(string roiName, string roiType, int? clickOffsetX, int? clickOffsetY, List<RoiData.ReadArea> readAreas, int x, int y, int width, int height)
         {
             string roiDataPath = Path.Combine(_saveDirectory, "roi_metadata.json");
 
@@ -354,9 +350,7 @@ namespace Garden
                 x = x,
                 y = y,
                 width = width,
-                height = height,
-                frameWidth = frameWidth,
-                frameHeight = frameHeight
+                height = height
             };
             Console.WriteLine($"Overwriting existing ROI: {roiName}");
 

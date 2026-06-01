@@ -61,6 +61,22 @@ namespace Garden
 
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
+        public const int AKEYCODE_BACK = 4;
+
+        public static void SendKey(int keycode)
+        {
+            if (_controlStream == null) { return; }
+            var buf = new byte[14];
+            buf[0] = 0x00; // SC_CONTROL_MSG_TYPE_INJECT_KEYCODE
+            WriteUInt32BE(buf, 2, (uint)keycode);
+            // WriteUInt32BE(buf, 6, 0); // repeat — already 0
+            // WriteUInt32BE(buf, 10, 0); // metaState — already 0
+            buf[1] = 0; // key down
+            _controlStream.Write(buf, 0, 14);
+            buf[1] = 1; // key up
+            _controlStream.Write(buf, 0, 14);
+        }
+
         // Simulates a left mouse button click at the current cursor position
         // Sends both mouse down and up events simultaneously via Win32 SendInput API
         public static void Click()
