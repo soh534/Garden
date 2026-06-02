@@ -318,6 +318,13 @@ namespace Garden
                 _roiMats.Clear();
                 LoadRoiData();
                 LoadRoiMats();
+
+                // Drop overlay entries for ROIs no longer in metadata (e.g. after `roi remove`)
+                var pruned = _snapshot.LatestScores
+                    .Where(kv => _savedRoiData.ContainsKey(kv.Key))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value);
+                _snapshot = new DetectionSnapshot(_snapshot.WaitingForRoi, _snapshot.WaitingRoiResult, _snapshot.OcrReadings, _snapshot.ReadAreaRects, pruned);
+
                 Logger.Info("RoiDetector reloaded");
             }
         }
