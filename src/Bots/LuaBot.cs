@@ -21,7 +21,7 @@ namespace Garden.Bots
             _lua.State.Encoding = System.Text.Encoding.UTF8;
 
             _lua["queueWait"]     = (Action<int>)(ms => _actionPlayer.QueueWait(ms));
-            _lua["waitMs"]        = (Action<int>)(ms => Thread.Sleep(ms));
+            _lua["waitMs"]        = (Action<int>)(ms => WaitMs(ms));
             _lua["getOcrInt"]     = (Func<string, int>)(key => GetOcrInt(key));
             _lua["queueAction"]   = (Action<string>)(actionName => QueueAction(actionName, null));
             _lua["queueActionAt"] = (Action<string, string>)((actionName, roiName) => QueueAction(actionName, roiName));
@@ -45,6 +45,37 @@ namespace Garden.Bots
         private volatile bool _reloadPending = false;
         private readonly FileSystemWatcher _watcher;
         private DateTime _lastWatcherEvent = DateTime.MinValue;
+        private CancellationToken _token;
+
+        private class BotStoppedException : Exception { }
+
+        private static bool HasInChain<T>(Exception ex) where T : Exception
+        {
+            for (Exception? e = ex; e != null; e = e.InnerException)
+            {
+                if (e is T) { return true; }
+            }
+            return false;
+        }
+
+        private void CheckAbort()
+        {
+            _token.ThrowIfCancellationRequested();
+            if (!_enabled) { throw new BotStoppedException(); }
+        }
+
+        private void WaitMs(int ms)
+        {
+            int elapsed = 0;
+            while (elapsed < ms)
+            {
+                CheckAbort();
+                int chunk = Math.Min(50, ms - elapsed);
+                Thread.Sleep(chunk);
+                elapsed += chunk;
+            }
+            CheckAbort();
+        }
 
         public void Enable()   => _enabled = true;
         public void Disable()  => _enabled = false;
@@ -75,6 +106,7 @@ namespace Garden.Bots
 
         private bool RoiVisible(string name)
         {
+            CheckAbort();
             bool found = _roiDetector.TryFindRoi(name, out RoiDetector.DetectedRoiInfo roiInfo);
             if (found) { _roiDetector.ProcessReadAreas(name, roiInfo); }
             return found;
@@ -123,6 +155,7 @@ namespace Garden.Bots
 
         public void Run(CancellationToken token)
         {
+            _token = token;
             var main = _lua["main"] as LuaFunction;
             if (main == null)
             {
@@ -138,8 +171,14 @@ namespace Garden.Bots
                     main = _lua["main"] as LuaFunction;
                     if (main == null) { Logger.Error("No main() after reload"); Thread.Sleep(500); continue; }
                 }
+                if (!_enabled) { Thread.Sleep(100); continue; }
                 try { main!.Call(); }
-                catch (Exception ex) { Logger.Error($"Bot error: {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    if (HasInChain<OperationCanceledException>(ex)) { break; }
+                    if (HasInChain<BotStoppedException>(ex)) { /* bot stop: loop idles */ }
+                    else { Logger.Error($"Bot error: {ex.Message}"); }
+                }
                 Thread.Sleep(100);
             }
         }

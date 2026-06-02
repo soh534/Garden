@@ -13,7 +13,6 @@ namespace Garden
             public int y { get; set; }
             public int width { get; set; }
             public int height { get; set; }
-            public string roiType { get; set; } = "template";
             public int? clickOffsetX { get; set; } = null;
             public int? clickOffsetY { get; set; } = null;
             public List<ReadArea> readAreas { get; set; } = new();
@@ -253,11 +252,6 @@ namespace Garden
                 return;
             }
 
-            Console.Write("Contour detection? (y/n): ");
-            string typeInput = _promptInput.Take(token);
-
-            string roiType = typeInput.Trim().ToLower() == "y" ? "contour" : "template";
-
             Console.Write("Set click point? (y/n): ");
             string clickPointInput = _promptInput.Take(token);
 
@@ -315,7 +309,7 @@ namespace Garden
             string filePath = Path.Combine(_saveDirectory, $"{roiName}.png");
 
             Cv2.ImWrite(filePath, roiMat);
-            Console.WriteLine($"ROI saved to {filePath} (type: {roiType})");
+            Console.WriteLine($"ROI saved to {filePath}");
             Directory.CreateDirectory(_imageSaveDirectory);
             string framePath = Path.Combine(_imageSaveDirectory, $"frame_{roiName}.png");
             Cv2.ImWrite(framePath, fullFrame);
@@ -323,10 +317,10 @@ namespace Garden
 
             roiMat.Dispose();
             fullFrame.Dispose();
-            SaveRoiData(roiName, roiType, clickOffsetX, clickOffsetY, readAreas, x, y, width, height);
+            SaveRoiData(roiName, clickOffsetX, clickOffsetY, readAreas, x, y, width, height);
         }
 
-        private void SaveRoiData(string roiName, string roiType, int? clickOffsetX, int? clickOffsetY, List<RoiData.ReadArea> readAreas, int x, int y, int width, int height)
+        private void SaveRoiData(string roiName, int? clickOffsetX, int? clickOffsetY, List<RoiData.ReadArea> readAreas, int x, int y, int width, int height)
         {
             string roiDataPath = Path.Combine(_saveDirectory, "roi_metadata.json");
 
@@ -343,7 +337,6 @@ namespace Garden
 
             savedRoiData[roiName] = new RoiData
             {
-                roiType = roiType,
                 clickOffsetX = clickOffsetX,
                 clickOffsetY = clickOffsetY,
                 readAreas = readAreas,
@@ -443,7 +436,7 @@ namespace Garden
                 Console.WriteLine("==========================================");
                 foreach (var (name, roi) in savedRoiData)
                 {
-                    Console.WriteLine($"  {name} [{roi.width}x{roi.height}] ({roi.roiType}){(roi.clickOffsetX.HasValue ? $" [click@{roi.clickOffsetX},{roi.clickOffsetY}]" : "")}");
+                    Console.WriteLine($"  {name} [{roi.width}x{roi.height}]{(roi.clickOffsetX.HasValue ? $" [click@{roi.clickOffsetX},{roi.clickOffsetY}]" : "")}");
                 }
                 Console.WriteLine("==========================================\n");
             }

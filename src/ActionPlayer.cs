@@ -100,6 +100,42 @@ namespace Garden
             }
         }
 
+        public void ListActions()
+        {
+            if (!Directory.Exists(_actionDirectory))
+            {
+                Console.WriteLine("No actions found (directory doesn't exist)");
+                return;
+            }
+            var files = Directory.GetFiles(_actionDirectory, "*.json")
+                .Select(Path.GetFileNameWithoutExtension)
+                .OrderBy(n => n)
+                .ToList();
+            if (files.Count == 0)
+            {
+                Console.WriteLine("No actions found");
+                return;
+            }
+            Console.WriteLine($"\nAvailable actions ({files.Count}):");
+            Console.WriteLine("==========================================");
+            foreach (var name in files) { Console.WriteLine($"  {name}"); }
+            Console.WriteLine("==========================================\n");
+        }
+
+        public void RemoveAction(string actionName)
+        {
+            string filePath = Path.Combine(_actionDirectory, $"{actionName}.json");
+            if (File.Exists(filePath))
+            {
+                File.Delete(filePath);
+                Console.WriteLine($"Removed action '{actionName}'");
+            }
+            else
+            {
+                Console.WriteLine($"Action '{actionName}' not found");
+            }
+        }
+
         public void QueueReplay(string actionName)
         {
             var events = LoadAction(actionName);

@@ -14,7 +14,6 @@ namespace Garden
             public int y { get; set; }
             public int width { get; set; }
             public int height { get; set; }
-            public string roiType { get; set; } = "template";
             public int? clickOffsetX { get; set; }
             public int? clickOffsetY { get; set; }
             public List<ReadArea> readAreas { get; set; } = new();
@@ -46,7 +45,6 @@ namespace Garden
         );
 
         public const double TemplateThreshold = 0.01;
-        public const double ContourDetectionThreshold = 0.7;
 
         private readonly string _roiDirectory;
         private readonly OcrReader _ocrReader;
@@ -54,7 +52,6 @@ namespace Garden
 
         private Dictionary<string, RoiData> _savedRoiData = new();
         private Dictionary<string, Mat> _roiMats = new();
-        private Dictionary<string, (Point[] contour, double area)> _contourRefs = new();
         private FileSystemWatcher _fileWatcher = null!;
         private readonly object _roiMatsLock = new();
         private DateTime _lastWatcherEvent = DateTime.MinValue;
@@ -153,28 +150,10 @@ namespace Garden
                 if (!_savedRoiData.TryGetValue(name, out RoiData? roiData)) { return false; }
                 if (!_roiMats.TryGetValue(name, out Mat? roiMat)) { return false; }
 
-                double score;
-                int centerX, centerY, clickX, clickY;
-
-                if (roiData.roiType == "contour" && _contourRefs.TryGetValue(name, out var contourRef))
-                {
-                    DetectContourRoi(frame, contourRef.contour, contourRef.area,
-                        out double combinedScore, out centerX, out centerY);
-                    score = combinedScore;
-                    clickX = centerX;
-                    clickY = centerY;
-                }
-                else
-                {
-                    DetectRoi(frame, roiMat, out score,
-                        out int minLocX, out int minLocY, out centerX, out centerY);
-                    clickX = roiData.clickOffsetX.HasValue
-                        ? minLocX + roiData.clickOffsetX.Value
-                        : centerX;
-                    clickY = roiData.clickOffsetY.HasValue
-                        ? minLocY + roiData.clickOffsetY.Value
-                        : centerY;
-                }
+                DetectRoi(frame, roiMat, out double score,
+                    out int minLocX, out int minLocY, out int centerX, out int centerY);
+                int clickX = roiData.clickOffsetX.HasValue ? minLocX + roiData.clickOffsetX.Value : centerX;
+                int clickY = roiData.clickOffsetY.HasValue ? minLocY + roiData.clickOffsetY.Value : centerY;
 
                 info = new DetectedRoiInfo
                 {
@@ -184,7 +163,7 @@ namespace Garden
                     Score = score
                 };
 
-                return roiData.roiType == "contour" ? score < ContourDetectionThreshold : score < TemplateThreshold;
+                return score < TemplateThreshold;
             }
         }
 
@@ -249,14 +228,6 @@ namespace Garden
             }
         }
 
-        public string GetRoiType(string name)
-        {
-            lock (_roiMatsLock)
-            {
-                return _savedRoiData.TryGetValue(name, out var roi) ? roi.roiType : "template";
-            }
-        }
-
         public IEnumerable<string> GetAllRoiNames()
         {
             lock (_roiMatsLock)
@@ -316,31 +287,14 @@ namespace Garden
 
             List<string> missingRois = new();
 
-            foreach (var (roiName, roiData) in _savedRoiData)
+            foreach (string roiName in _savedRoiData.Keys)
             {
                 string roiPath = Path.Combine(_roiDirectory, $"{roiName}.png");
                 if (File.Exists(roiPath))
                 {
                     Mat roiMat = Cv2.ImRead(roiPath, ImreadModes.Color);
                     _roiMats[roiName] = roiMat;
-
-                    if (roiData.roiType == "contour")
-                    {
-                        Point[]? refContour = ExtractReferenceContour(roiMat);
-                        if (refContour != null)
-                        {
-                            _contourRefs[roiName] = (refContour, Cv2.ContourArea(refContour));
-                            Logger.Info($"Loaded contour ROI: {roiName} (area={Cv2.ContourArea(refContour):F1})");
-                        }
-                        else
-                        {
-                            Logger.Warn($"Could not extract contour from ROI: {roiName}");
-                        }
-                    }
-                    else
-                    {
-                        Logger.Info($"Loaded ROI: {roiName}");
-                    }
+                    Logger.Info($"Loaded ROI: {roiName}");
                 }
                 else
                 {
@@ -362,7 +316,6 @@ namespace Garden
             {
                 foreach (var mat in _roiMats.Values) { mat.Dispose(); }
                 _roiMats.Clear();
-                _contourRefs.Clear();
                 LoadRoiData();
                 LoadRoiMats();
                 Logger.Info("RoiDetector reloaded");
@@ -381,83 +334,6 @@ namespace Garden
             centerY = minLoc.Y + roiMat.Height / 2;
         }
 
-        private static void DetectContourRoi(Mat frame, Point[] refContour, double refArea,
-            out double combinedScore, out int centerX, out int centerY)
-        {
-            double minArea = refArea / 3.0;
-            double maxArea = refArea * 3.0;
-
-            using Mat gray = new Mat();
-            using Mat binary = new Mat();
-            Cv2.CvtColor(frame, gray, ColorConversionCodes.BGR2GRAY);
-            Cv2.Threshold(gray, binary, 200, 255, ThresholdTypes.Binary);
-            Cv2.FindContours(binary, out Point[][] contours, out _,
-                RetrievalModes.List, ContourApproximationModes.ApproxSimple);
-
-            combinedScore = double.MaxValue;
-            centerX = 0;
-            centerY = 0;
-
-            foreach (Point[] c in contours)
-            {
-                double area = Cv2.ContourArea(c);
-                if (area < minArea || area > maxArea) { continue; }
-                double shapeScore = Cv2.MatchShapes(refContour, c, ShapeMatchModes.I1, 0);
-                double areaRatio = Math.Abs(area / refArea - 1.0);
-                double darkFrac = ComputeInnerDarkFrac(gray, c);
-                double score = 2 * shapeScore + areaRatio - 0.5 * darkFrac;
-                if (score < combinedScore)
-                {
-                    combinedScore = score;
-                    Moments m = Cv2.Moments(c);
-                    if (m.M00 != 0)
-                    {
-                        centerX = (int)(m.M10 / m.M00);
-                        centerY = (int)(m.M01 / m.M00);
-                    }
-                }
-            }
-        }
-
-        private static Point[]? ExtractReferenceContour(Mat roiMat)
-        {
-            using Mat gray = new Mat();
-            using Mat binary = new Mat();
-            Cv2.CvtColor(roiMat, gray, ColorConversionCodes.BGR2GRAY);
-            Cv2.Threshold(gray, binary, 200, 255, ThresholdTypes.Binary);
-            Cv2.FindContours(binary, out Point[][] contours, out _,
-                RetrievalModes.External, ContourApproximationModes.ApproxSimple);
-            if (contours.Length == 0) { return null; }
-            return contours.OrderByDescending(c => Cv2.ContourArea(c)).First();
-        }
-
-        private static double ComputeInnerDarkFrac(Mat gray, Point[] contour, byte darkThresh = 120)
-        {
-            Rect bbox = Cv2.BoundingRect(contour);
-            int x = Math.Max(0, bbox.X);
-            int y = Math.Max(0, bbox.Y);
-            int x2 = Math.Min(gray.Width, bbox.X + bbox.Width);
-            int y2 = Math.Min(gray.Height, bbox.Y + bbox.Height);
-            int w = x2 - x;
-            int h = y2 - y;
-            if (w <= 0 || h <= 0) { return 0.0; }
-
-            using Mat mask = Mat.Zeros(gray.Size(), MatType.CV_8UC1);
-            Cv2.DrawContours(mask, new[] { contour }, -1, Scalar.White, -1);
-            Rect croppedRect = new Rect(x, y, w, h);
-            using Mat bboxGray = new Mat(gray, croppedRect);
-            using Mat bboxMask = new Mat(mask, croppedRect);
-            using Mat gapMask = new Mat();
-            Cv2.BitwiseNot(bboxMask, gapMask);
-            using Mat darkBinary = new Mat();
-            Cv2.Threshold(bboxGray, darkBinary, darkThresh, 255, ThresholdTypes.BinaryInv);
-            using Mat darkGap = new Mat();
-            Cv2.BitwiseAnd(darkBinary, gapMask, darkGap);
-            double totalGap = Cv2.CountNonZero(gapMask);
-            if (totalGap == 0) { return 0.0; }
-            return Cv2.CountNonZero(darkGap) / totalGap;
-        }
-
         private void ScanLoop()
         {
             Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
@@ -474,31 +350,15 @@ namespace Garden
                     foreach (var name in names)
                     {
                         Mat? matClone = null;
-                        RoiData? roiData = null;
-                        (Point[] contour, double area)? contourRef = null;
                         lock (_roiMatsLock)
                         {
-                            if (!_savedRoiData.TryGetValue(name, out roiData)) { continue; }
                             if (!_roiMats.TryGetValue(name, out var mat)) { continue; }
                             matClone = mat.Clone();
-                            if (roiData.roiType == "contour" && _contourRefs.TryGetValue(name, out var cr)) { contourRef = cr; }
                         }
                         try
                         {
-                            double score;
-                            bool detected;
-                            int centerX, centerY;
-                            if (roiData.roiType == "contour" && contourRef.HasValue)
-                            {
-                                DetectContourRoi(frame, contourRef.Value.contour, contourRef.Value.area,
-                                    out score, out centerX, out centerY);
-                                detected = score < ContourDetectionThreshold;
-                            }
-                            else
-                            {
-                                DetectRoi(frame, matClone, out score, out _, out _, out centerX, out centerY);
-                                detected = score < TemplateThreshold;
-                            }
+                            DetectRoi(frame, matClone, out double score, out _, out _, out int centerX, out int centerY);
+                            bool detected = score < TemplateThreshold;
                             var updated = new Dictionary<string, (double, bool, int, int)>(_snapshot.LatestScores) { [name] = (score, detected, centerX, centerY) };
                             _snapshot = new DetectionSnapshot(_snapshot.WaitingForRoi, _snapshot.WaitingRoiResult, _snapshot.OcrReadings, _snapshot.ReadAreaRects, updated);
                         }

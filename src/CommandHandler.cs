@@ -76,6 +76,12 @@ namespace Garden
                         case "replay":
                             HandleRunActionCommand(command);
                             break;
+                        case "list":
+                            _actionPlayer.ListActions();
+                            break;
+                        case "remove":
+                            HandleRemoveActionCommand(command);
+                            break;
                     }
                     return true;
 
@@ -127,6 +133,8 @@ namespace Garden
             Console.WriteLine("  action reset                - Clear recorded events (stay recording)");
             Console.WriteLine("  action stop                 - Stop recording and save");
             Console.WriteLine("  action replay <filename>    - Replay recorded clicks");
+            Console.WriteLine("  action list                 - List all actions");
+            Console.WriteLine("  action remove <name>        - Remove an action");
             Console.WriteLine("  roi record <name>           - Record an ROI and save it as <name>");
             Console.WriteLine("  roi stop                    - Cancel ROI recording");
             Console.WriteLine("  roi list                    - List all ROIs");
@@ -171,6 +179,19 @@ namespace Garden
             else
             {
                 Logger.Info("Usage: action replay filename");
+            }
+        }
+
+        private void HandleRemoveActionCommand(string command)
+        {
+            var parts = command.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 3)
+            {
+                _actionPlayer.RemoveAction(parts[2].Trim());
+            }
+            else
+            {
+                Logger.Info("Usage: action remove <name>");
             }
         }
 
