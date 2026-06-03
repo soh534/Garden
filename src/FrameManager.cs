@@ -70,7 +70,7 @@ namespace Garden
 
             var proc = new Process();
             proc.StartInfo.FileName               = "ffmpeg";
-            proc.StartInfo.Arguments              = $"-loglevel error -probesize 32 -analyzeduration 0 -f h264 -i pipe:0 -f rawvideo -pix_fmt bgr24 tcp://127.0.0.1:{port}";
+            proc.StartInfo.Arguments              = $"-loglevel warning -fflags +discardcorrupt -probesize 32 -analyzeduration 0 -f h264 -i pipe:0 -f rawvideo -pix_fmt bgr24 tcp://127.0.0.1:{port}";
             proc.StartInfo.RedirectStandardInput  = true;
             proc.StartInfo.RedirectStandardError  = true;
             proc.StartInfo.UseShellExecute        = false;
