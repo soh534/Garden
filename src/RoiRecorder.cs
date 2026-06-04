@@ -403,6 +403,48 @@ namespace Garden
             }
         }
 
+        public void RenameRoi(string oldName, string newName)
+        {
+            string roiDataPath = Path.Combine(_saveDirectory, "roi_metadata.json");
+            if (!File.Exists(roiDataPath))
+            {
+                Console.WriteLine($"ROI metadata file not found: {roiDataPath}");
+                return;
+            }
+            try
+            {
+                string jsonString = File.ReadAllText(roiDataPath);
+                var savedRoiData = JsonSerializer.Deserialize<Dictionary<string, RoiData>>(jsonString) ?? new();
+                if (!savedRoiData.ContainsKey(oldName))
+                {
+                    Console.WriteLine($"ROI '{oldName}' not found in metadata");
+                    return;
+                }
+                if (savedRoiData.ContainsKey(newName))
+                {
+                    Console.WriteLine($"ROI '{newName}' already exists; choose another name");
+                    return;
+                }
+                savedRoiData[newName] = savedRoiData[oldName];
+                savedRoiData.Remove(oldName);
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                File.WriteAllText(roiDataPath, JsonSerializer.Serialize(savedRoiData, options));
+
+                string oldImg = Path.Combine(_saveDirectory, $"{oldName}.png");
+                string newImg = Path.Combine(_saveDirectory, $"{newName}.png");
+                if (File.Exists(oldImg)) { File.Move(oldImg, newImg); }
+                string oldFrame = Path.Combine(_imageSaveDirectory, $"frame_{oldName}.png");
+                string newFrame = Path.Combine(_imageSaveDirectory, $"frame_{newName}.png");
+                if (File.Exists(oldFrame)) { File.Move(oldFrame, newFrame); }
+                Console.WriteLine($"Renamed ROI '{oldName}' -> '{newName}'");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error renaming ROI: {ex.Message}");
+                throw;
+            }
+        }
+
         public override void Dispose()
         {
             _cts.Cancel();

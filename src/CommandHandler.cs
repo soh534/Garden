@@ -101,6 +101,9 @@ namespace Garden
                         case "list":
                             _roiRecorder.ListRois();
                             break;
+                        case "rename":
+                            HandleRenameRoiCommand(command);
+                            break;
                     }
                     return true;
 
@@ -139,6 +142,7 @@ namespace Garden
             Console.WriteLine("  roi stop                    - Cancel ROI recording");
             Console.WriteLine("  roi list                    - List all ROIs");
             Console.WriteLine("  roi remove <roi_name>       - Remove an ROI and its image");
+            Console.WriteLine("  roi rename <old> <new>      - Rename an ROI (image + metadata)");
             Console.WriteLine("  bot start                   - Start the bot automation");
             Console.WriteLine("  bot stop                    - Stop the bot automation");
             Console.WriteLine("  help                        - Show this help message");
@@ -192,6 +196,19 @@ namespace Garden
             else
             {
                 Logger.Info("Usage: action remove <name>");
+            }
+        }
+
+        private void HandleRenameRoiCommand(string command)
+        {
+            var parts = command.Split(' ', 4, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 4)
+            {
+                _roiRecorder.RenameRoi(parts[2].Trim(), parts[3].Trim());
+            }
+            else
+            {
+                Logger.Info("Usage: roi rename <old_name> <new_name>");
             }
         }
 
