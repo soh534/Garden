@@ -89,8 +89,12 @@ namespace Garden
                     switch (verb)
                     {
                         case "record":
-                            if (parts.Length < 3) { Console.WriteLine("Usage: roi record <name>"); break; }
-                            _roiRecorder.StartRecording(string.Join(' ', parts.Skip(2)).Trim());
+                            bool isFixed = parts.Length > 2 && parts[2].ToLowerInvariant() == "fixed";
+                            string roiName = isFixed
+                                ? (parts.Length > 3 ? string.Join(' ', parts.Skip(3)).Trim() : "")
+                                : (parts.Length > 2 ? string.Join(' ', parts.Skip(2)).Trim() : "");
+                            if (string.IsNullOrEmpty(roiName)) { Console.WriteLine("Usage: roi record <name>  |  roi record fixed <name>"); break; }
+                            _roiRecorder.StartRecording(roiName, isFixed);
                             break;
                         case "stop":
                             _roiRecorder.StopRecording();
@@ -139,6 +143,7 @@ namespace Garden
             Console.WriteLine("  action list                 - List all actions");
             Console.WriteLine("  action remove <name>        - Remove an action");
             Console.WriteLine("  roi record <name>           - Record an ROI and save it as <name>");
+            Console.WriteLine("  roi record fixed <name>     - Record a fixed-location ROI (checked in place, no search)");
             Console.WriteLine("  roi stop                    - Cancel ROI recording");
             Console.WriteLine("  roi list                    - List all ROIs");
             Console.WriteLine("  roi remove <roi_name>       - Remove an ROI and its image");

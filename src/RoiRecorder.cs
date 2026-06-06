@@ -16,6 +16,7 @@ namespace Garden
             public int? clickOffsetX { get; set; } = null;
             public int? clickOffsetY { get; set; } = null;
             public List<ReadArea> readAreas { get; set; } = new();
+            public bool fixedLocation { get; set; } = false;
 
             public class ReadArea
             {
@@ -36,12 +37,13 @@ namespace Garden
         private bool _hasStartPoint = false;
         private volatile bool _isPrompting = false;
         private string? _pendingName = null;
+        private bool _pendingFixed = false;
         private enum CaptureMode { None, ClickPoint, BoundingBox }
         private volatile CaptureMode _captureMode = CaptureMode.None;
         private volatile bool _captureReady = false;
         private Mat? _currentFrame = null;
 
-        private record RoiCapture(Mat RoiMat, Mat FullFrame, int X, int Y, int Width, int Height, string? PendingName);
+        private record RoiCapture(Mat RoiMat, Mat FullFrame, int X, int Y, int Width, int Height, string? PendingName, bool Fixed);
         private readonly BlockingCollection<RoiCapture> _captureQueue = new(boundedCapacity: 1);
         private RoiCapture? _pendingRestart = null;
         private volatile CancellationTokenSource? _restartCts = null;
@@ -74,7 +76,7 @@ namespace Garden
                         bool restarted = false;
                         try
                         {
-                            PromptAndSaveRoi(capture.RoiMat, capture.FullFrame, capture.X, capture.Y, capture.Width, capture.Height, capture.PendingName, _restartCts.Token);
+                            PromptAndSaveRoi(capture.RoiMat, capture.FullFrame, capture.X, capture.Y, capture.Width, capture.Height, capture.PendingName, capture.Fixed, _restartCts.Token);
                         }
                         catch (OperationCanceledException) when (_restartCts.IsCancellationRequested)
                         {
@@ -103,11 +105,12 @@ namespace Garden
             catch (OperationCanceledException) { }
         }
 
-        public void StartRecording(string? name = null)
+        public void StartRecording(string? name = null, bool fixedLocation = false)
         {
             if (!_isRecording)
             {
                 _pendingName = name;
+                _pendingFixed = fixedLocation;
                 _hasStartPoint = false;
                 base.StartRecording();
                 Console.WriteLine($"ROI recording started{(name != null ? $" (will save as '{name}')" : "")}.");
@@ -192,7 +195,7 @@ namespace Garden
                         Mat roiMat = new Mat(_currentFrame, roi);
                         var pendingName = _pendingName;
                         var fullFrameSnapshot = _currentFrame.Clone();
-                        var capture = new RoiCapture(roiMat, fullFrameSnapshot, fx, fy, fw, fh, pendingName);
+                        var capture = new RoiCapture(roiMat, fullFrameSnapshot, fx, fy, fw, fh, pendingName, _pendingFixed);
 
                         if (_isPrompting)
                         {
@@ -228,7 +231,7 @@ namespace Garden
             return (_startX, _startY, _currentX, _currentY);
         }
 
-        private void PromptAndSaveRoi(Mat roiMat, Mat fullFrame, int x, int y, int width, int height, string? pendingName, CancellationToken restartToken)
+        private void PromptAndSaveRoi(Mat roiMat, Mat fullFrame, int x, int y, int width, int height, string? pendingName, bool fixedLocation, CancellationToken restartToken)
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, restartToken);
             CancellationToken token = linked.Token;
@@ -317,10 +320,10 @@ namespace Garden
 
             roiMat.Dispose();
             fullFrame.Dispose();
-            SaveRoiData(roiName, clickOffsetX, clickOffsetY, readAreas, x, y, width, height);
+            SaveRoiData(roiName, clickOffsetX, clickOffsetY, readAreas, x, y, width, height, fixedLocation);
         }
 
-        private void SaveRoiData(string roiName, int? clickOffsetX, int? clickOffsetY, List<RoiData.ReadArea> readAreas, int x, int y, int width, int height)
+        private void SaveRoiData(string roiName, int? clickOffsetX, int? clickOffsetY, List<RoiData.ReadArea> readAreas, int x, int y, int width, int height, bool fixedLocation)
         {
             string roiDataPath = Path.Combine(_saveDirectory, "roi_metadata.json");
 
@@ -343,7 +346,8 @@ namespace Garden
                 x = x,
                 y = y,
                 width = width,
-                height = height
+                height = height,
+                fixedLocation = fixedLocation
             };
             Console.WriteLine($"Overwriting existing ROI: {roiName}");
 
@@ -478,7 +482,7 @@ namespace Garden
                 Console.WriteLine("==========================================");
                 foreach (var (name, roi) in savedRoiData)
                 {
-                    Console.WriteLine($"  {name} [{roi.width}x{roi.height}]{(roi.clickOffsetX.HasValue ? $" [click@{roi.clickOffsetX},{roi.clickOffsetY}]" : "")}");
+                    Console.WriteLine($"  {name} [{roi.width}x{roi.height}]{(roi.fixedLocation ? " [fixed]" : "")}{(roi.clickOffsetX.HasValue ? $" [click@{roi.clickOffsetX},{roi.clickOffsetY}]" : "")}");
                 }
                 Console.WriteLine("==========================================\n");
             }

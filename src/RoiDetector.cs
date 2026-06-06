@@ -17,6 +17,7 @@ namespace Garden
             public int? clickOffsetX { get; set; }
             public int? clickOffsetY { get; set; }
             public List<ReadArea> readAreas { get; set; } = new();
+            public bool fixedLocation { get; set; } = false;
 
             public class ReadArea
             {
@@ -156,7 +157,7 @@ namespace Garden
                 if (!_savedRoiData.TryGetValue(name, out RoiData? roiData)) { return false; }
                 if (!_roiMats.TryGetValue(name, out Mat? roiMat)) { return false; }
 
-                DetectRoi(frame, roiMat, out double score,
+                DetectRoi(frame, roiMat, roiData, out double score,
                     out int minLocX, out int minLocY, out int centerX, out int centerY);
                 int clickX = roiData.clickOffsetX.HasValue ? minLocX + roiData.clickOffsetX.Value : centerX;
                 int clickY = roiData.clickOffsetY.HasValue ? minLocY + roiData.clickOffsetY.Value : centerY;
@@ -335,9 +336,28 @@ namespace Garden
             }
         }
 
-        private static void DetectRoi(Mat frame, Mat roiMat,
+        private static void DetectRoi(Mat frame, Mat roiMat, RoiData roiData,
             out double minVal, out int minLocX, out int minLocY, out int centerX, out int centerY)
         {
+            if (roiData.fixedLocation)
+            {
+                minLocX = roiData.x;
+                minLocY = roiData.y;
+                centerX = roiData.x + roiMat.Width / 2;
+                centerY = roiData.y + roiMat.Height / 2;
+                if (roiData.x < 0 || roiData.y < 0 ||
+                    roiData.x + roiMat.Width > frame.Width || roiData.y + roiMat.Height > frame.Height)
+                {
+                    minVal = double.MaxValue;   // recorded region falls off this frame
+                    return;
+                }
+                using Mat region = new Mat(frame, new Rect(roiData.x, roiData.y, roiMat.Width, roiMat.Height));
+                using Mat fixedResult = new Mat();
+                Cv2.MatchTemplate(region, roiMat, fixedResult, TemplateMatchModes.SqDiffNormed);
+                minVal = fixedResult.At<float>(0, 0);
+                return;
+            }
+
             using Mat result = new Mat();
             Cv2.MatchTemplate(frame, roiMat, result, TemplateMatchModes.SqDiffNormed);
             Cv2.MinMaxLoc(result, out minVal, out _, out Point minLoc, out _);
@@ -372,7 +392,7 @@ namespace Garden
                         }
                         try
                         {
-                            DetectRoi(frame, matClone, out double score, out int minLocX, out int minLocY, out int centerX, out int centerY);
+                            DetectRoi(frame, matClone, roiData, out double score, out int minLocX, out int minLocY, out int centerX, out int centerY);
                             bool detected = score < TemplateThreshold;
                             int clickX = roiData.clickOffsetX.HasValue ? minLocX + roiData.clickOffsetX.Value : centerX;
                             int clickY = roiData.clickOffsetY.HasValue ? minLocY + roiData.clickOffsetY.Value : centerY;
