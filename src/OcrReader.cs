@@ -9,6 +9,7 @@ namespace Garden
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private readonly TesseractEngine _engine;
         private readonly string _debugDir;
+        private readonly object _engineLock = new();
 
         public OcrReader(string tessDataPath, string debugDir)
         {
@@ -35,9 +36,13 @@ namespace Garden
                 }
 
                 byte[] pngBytes = thresholded.ToBytes(".png");
-                using var pix = Pix.LoadFromMemory(pngBytes);
-                using var page = _engine.Process(pix, PageSegMode.SingleWord);
-                string text = page.GetText().Trim();
+                string text;
+                lock (_engineLock)
+                {
+                    using var pix = Pix.LoadFromMemory(pngBytes);
+                    using var page = _engine.Process(pix, PageSegMode.SingleWord);
+                    text = page.GetText().Trim();
+                }
                 if (int.TryParse(text, out int value))
                 {
                     return value;

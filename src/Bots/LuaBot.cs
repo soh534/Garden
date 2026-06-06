@@ -118,17 +118,30 @@ namespace Garden.Bots
             if (roiName == null)
             {
                 _actionPlayer.QueueReplay(actionName);
-                return;
             }
-
-            _roiDetector.TryFindRoi(roiName, out RoiDetector.DetectedRoiInfo roiInfo);
-            if (roiInfo.RoiName == null)
+            else
             {
-                Logger.Error($"ROI '{roiName}' not found in detection results");
-                return;
+                _roiDetector.TryFindRoi(roiName, out RoiDetector.DetectedRoiInfo roiInfo);
+                if (roiInfo.RoiName == null)
+                {
+                    Logger.Error($"ROI '{roiName}' not found in detection results");
+                    return;
+                }
+
+                _actionPlayer.QueueReplayWithOffset(actionName, roiInfo.ClickPoint.X, roiInfo.ClickPoint.Y);
             }
 
-            _actionPlayer.QueueReplayWithOffset(actionName, roiInfo.ClickPoint.X, roiInfo.ClickPoint.Y);
+            WaitForActions();
+        }
+
+        private void WaitForActions()
+        {
+            while (!_actionPlayer.IsIdle)
+            {
+                CheckAbort();
+                Thread.Sleep(20);
+            }
+            CheckAbort();
         }
 
         private int GetOcrInt(string key)

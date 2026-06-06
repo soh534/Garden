@@ -307,19 +307,31 @@ namespace Garden
         private void DrawDetectedRois(Mat frame, RoiDetector.DetectionSnapshot snapshot)
         {
             int colorIdx = 0;
-            foreach (var (name, (score, detected, cx, cy)) in snapshot.LatestScores)
+            foreach (var kv in snapshot.LatestScores)
             {
-                if (!detected) { continue; }
+                string name = kv.Key;
+                RoiDetector.RoiScanResult r = kv.Value;
+                if (!r.Detected) { continue; }
                 Scalar color = DetectedColors[colorIdx++ % DetectedColors.Length];
                 Mat? roiMat = _roiDetector.GetRoiMat(name);
                 if (roiMat == null) { continue; }
-                var (dispCx, dispCy) = InputManager.PhoneToDisplay(cx, cy, frame.Width, frame.Height);
+                var (dispCx, dispCy) = InputManager.PhoneToDisplay(r.CenterX, r.CenterY, frame.Width, frame.Height);
                 var (dispW, dispH)   = InputManager.PhoneToDisplay(roiMat.Width, roiMat.Height, frame.Width, frame.Height);
                 Rect box = new Rect(dispCx - dispW / 2, dispCy - dispH / 2, dispW, dispH);
                 Cv2.Rectangle(frame, box, color, 2);
-                Cv2.PutText(frame, $"{name} {score:F4}",
+                Cv2.PutText(frame, $"{name} {r.Score:F4}",
                     new OpenCvSharp.Point(box.X, box.Y - 5),
                     HersheyFonts.HersheySimplex, 0.4, color, 1);
+                var (clx, cly) = InputManager.PhoneToDisplay(r.ClickX, r.ClickY, frame.Width, frame.Height);
+                Cv2.Circle(frame, new OpenCvSharp.Point(clx, cly), 6, color, 2);
+                int ty = box.Y + box.Height + 15;
+                foreach (var (raName, val) in r.Readings)
+                {
+                    Cv2.PutText(frame, $"{raName}: {val}",
+                        new OpenCvSharp.Point(box.X, ty),
+                        HersheyFonts.HersheySimplex, 0.4, color, 1);
+                    ty += 15;
+                }
             }
         }
 
@@ -344,10 +356,10 @@ namespace Garden
             int x = 10;
             int y = 60;
             int colorIdx = 0;
-            foreach (var (name, (score, detected, _, _)) in snapshot.LatestScores)
+            foreach (var kv in snapshot.LatestScores)
             {
-                Scalar color = detected ? DetectedColors[colorIdx++ % DetectedColors.Length] : Scalar.Black;
-                Cv2.PutText(frame, $"{name} {score:F4}", new OpenCvSharp.Point(x, y),
+                Scalar color = kv.Value.Detected ? DetectedColors[colorIdx++ % DetectedColors.Length] : Scalar.Black;
+                Cv2.PutText(frame, $"{kv.Key} {kv.Value.Score:F4}", new OpenCvSharp.Point(x, y),
                     HersheyFonts.HersheySimplex, 0.5, color, 2);
                 y += 20;
             }

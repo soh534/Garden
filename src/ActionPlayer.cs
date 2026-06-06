@@ -41,6 +41,9 @@ namespace Garden
         private OpenCvSharp.Point? _currentCursorPosition = null;
         public OpenCvSharp.Point? CurrentCursorPosition => _currentCursorPosition;
 
+        // True when no queued action events remain to play.
+        public bool IsIdle => _actionQueue.IsEmpty;
+
         public ActionPlayer(string actionDirectory, ConcurrentQueue<MouseEvent> actionQueue)
         {
             _actionDirectory = actionDirectory;

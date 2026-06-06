@@ -41,8 +41,14 @@ namespace Garden
             DetectedRoiInfo? WaitingRoiResult,
             Dictionary<string, int> OcrReadings,
             Dictionary<string, Rect> ReadAreaRects,
-            Dictionary<string, (double Score, bool Detected, int CenterX, int CenterY)> LatestScores
+            Dictionary<string, RoiScanResult> LatestScores
         );
+
+        public record RoiScanResult(
+            double Score, bool Detected,
+            int CenterX, int CenterY,
+            int ClickX, int ClickY,
+            Dictionary<string, int> Readings);
 
         public const double TemplateThreshold = 0.005;
 
@@ -59,7 +65,7 @@ namespace Garden
         private Mat? _latestFrame;
         private readonly object _frameLock = new();
 
-        private volatile DetectionSnapshot _snapshot = new(null, null, new(), new(), new Dictionary<string, (double, bool, int, int)>());
+        private volatile DetectionSnapshot _snapshot = new(null, null, new(), new(), new Dictionary<string, RoiScanResult>());
         public DetectionSnapshot Snapshot => _snapshot;
 
         public RoiDetector(string roiDirectory, string debugDir)
@@ -357,16 +363,35 @@ namespace Garden
                     foreach (var name in names)
                     {
                         Mat? matClone = null;
+                        RoiData? roiData = null;
                         lock (_roiMatsLock)
                         {
                             if (!_roiMats.TryGetValue(name, out var mat)) { continue; }
+                            if (!_savedRoiData.TryGetValue(name, out roiData)) { continue; }
                             matClone = mat.Clone();
                         }
                         try
                         {
-                            DetectRoi(frame, matClone, out double score, out _, out _, out int centerX, out int centerY);
+                            DetectRoi(frame, matClone, out double score, out int minLocX, out int minLocY, out int centerX, out int centerY);
                             bool detected = score < TemplateThreshold;
-                            var updated = new Dictionary<string, (double, bool, int, int)>(_snapshot.LatestScores) { [name] = (score, detected, centerX, centerY) };
+                            int clickX = roiData.clickOffsetX.HasValue ? minLocX + roiData.clickOffsetX.Value : centerX;
+                            int clickY = roiData.clickOffsetY.HasValue ? minLocY + roiData.clickOffsetY.Value : centerY;
+                            var readings = new Dictionary<string, int>();
+                            if (detected && roiData.readAreas.Count > 0)
+                            {
+                                foreach (var ra in roiData.readAreas)
+                                {
+                                    int ax = Math.Max(0, Math.Min(minLocX + ra.x, frame.Width - 1));
+                                    int ay = Math.Max(0, Math.Min(minLocY + ra.y, frame.Height - 1));
+                                    int aw = Math.Min(ra.width, frame.Width - ax);
+                                    int ah = Math.Min(ra.height, frame.Height - ay);
+                                    if (aw <= 0 || ah <= 0) { continue; }
+                                    using Mat readMat = new Mat(frame, new Rect(ax, ay, aw, ah));
+                                    readings[ra.name] = _ocrReader.ReadInt(readMat);
+                                }
+                            }
+                            var result = new RoiScanResult(score, detected, centerX, centerY, clickX, clickY, readings);
+                            var updated = new Dictionary<string, RoiScanResult>(_snapshot.LatestScores) { [name] = result };
                             _snapshot = new DetectionSnapshot(_snapshot.WaitingForRoi, _snapshot.WaitingRoiResult, _snapshot.OcrReadings, _snapshot.ReadAreaRects, updated);
                         }
                         finally { matClone?.Dispose(); }
