@@ -69,6 +69,18 @@ namespace Garden
         private volatile DetectionSnapshot _snapshot = new(null, null, new(), new(), new Dictionary<string, RoiScanResult>());
         public DetectionSnapshot Snapshot => _snapshot;
 
+        private volatile bool _scanEnabled = true;
+        public bool ScanEnabled => _scanEnabled;
+        public void SetScanEnabled(bool on)
+        {
+            _scanEnabled = on;
+            if (!on)
+            {
+                // Blank the overlay scores so stale values aren't shown while the scan is off.
+                _snapshot = new DetectionSnapshot(_snapshot.WaitingForRoi, _snapshot.WaitingRoiResult, _snapshot.OcrReadings, _snapshot.ReadAreaRects, new Dictionary<string, RoiScanResult>());
+            }
+        }
+
         public RoiDetector(string roiDirectory, string debugDir)
         {
             string tessPrefix = Environment.GetEnvironmentVariable("TESSDATA_PREFIX")
@@ -372,6 +384,7 @@ namespace Garden
             Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
             while (!_cts.IsCancellationRequested)
             {
+                if (!_scanEnabled) { Thread.Sleep(100); continue; }
                 Mat? frame;
                 lock (_frameLock) { frame = _latestFrame?.Clone(); }
                 if (frame == null) { Thread.Sleep(100); continue; }
