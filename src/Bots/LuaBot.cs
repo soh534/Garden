@@ -43,6 +43,8 @@ namespace Garden.Bots
         private readonly string _scriptPath;
         private volatile bool _enabled = false;
         private volatile bool _reloadPending = false;
+        private volatile string? _pendingEval = null;
+        private volatile bool _evaluating = false;
         private readonly FileSystemWatcher _watcher;
         private DateTime _lastWatcherEvent = DateTime.MinValue;
         private CancellationToken _token;
@@ -61,7 +63,7 @@ namespace Garden.Bots
         private void CheckAbort()
         {
             _token.ThrowIfCancellationRequested();
-            if (!_enabled) { throw new BotStoppedException(); }
+            if (!_enabled && !_evaluating) { throw new BotStoppedException(); }
         }
 
         private void WaitMs(int ms)
@@ -79,6 +81,7 @@ namespace Garden.Bots
 
         public void Enable()   => _enabled = true;
         public void Disable()  => _enabled = false;
+        public void Eval(string code) => _pendingEval = code;
 
         public void Dispose()
         {
@@ -91,6 +94,25 @@ namespace Garden.Bots
             if ((DateTime.UtcNow - _lastWatcherEvent).TotalMilliseconds < 500) { return; }
             _lastWatcherEvent = DateTime.UtcNow;
             _reloadPending = true;
+        }
+
+        private void RunEval(string code)
+        {
+            _evaluating = true;
+            try
+            {
+                var results = _lua.DoString(code);
+                if (results != null && results.Length > 0)
+                {
+                    foreach (var r in results) { Console.WriteLine($"[lua] => {r ?? "nil"}"); }
+                }
+                else
+                {
+                    Console.WriteLine("[lua] ok");
+                }
+            }
+            catch (Exception ex) { Console.WriteLine($"[lua] error: {ex.Message}"); }
+            finally { _evaluating = false; }
         }
 
         private void ReloadScript()
@@ -114,7 +136,7 @@ namespace Garden.Bots
 
         private void QueueAction(string actionName, string? roiName)
         {
-            if (!_enabled) { return; }
+            if (!_enabled && !_evaluating) { return; }
             if (roiName == null)
             {
                 _actionPlayer.QueueReplay(actionName);
@@ -184,6 +206,8 @@ namespace Garden.Bots
                     main = _lua["main"] as LuaFunction;
                     if (main == null) { Logger.Error("No main() after reload"); Thread.Sleep(500); continue; }
                 }
+                var evalCode = Interlocked.Exchange(ref _pendingEval, null);
+                if (evalCode != null) { RunEval(evalCode); }
                 if (!_enabled) { Thread.Sleep(100); continue; }
                 try { main!.Call(); }
                 catch (Exception ex)

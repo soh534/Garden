@@ -125,6 +125,12 @@ namespace Garden
                     }
                     return true;
 
+                case "lua":
+                    int sp = command.IndexOf(' ');
+                    if (sp >= 0 && sp + 1 < command.Length) { _frameManager.EvalLua(command.Substring(sp + 1)); }
+                    else { Console.WriteLine("Usage: lua <code>"); }
+                    return true;
+
                 default:
                     Console.WriteLine($"Unknown command: '{command}'. Type 'help' for available commands.");
                     return true;
@@ -144,6 +150,7 @@ namespace Garden
             Console.WriteLine("  action remove <name>        - Remove an action");
             Console.WriteLine("  roi record <name>           - Record an ROI and save it as <name>");
             Console.WriteLine("  roi record fixed <name>     - Record a fixed-location ROI (checked in place, no search)");
+            Console.WriteLine("  lua <code>                  - Run Lua against the live bot state (debug)");
             Console.WriteLine("  roi stop                    - Cancel ROI recording");
             Console.WriteLine("  roi list                    - List all ROIs");
             Console.WriteLine("  roi remove <roi_name>       - Remove an ROI and its image");

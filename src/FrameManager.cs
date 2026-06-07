@@ -43,6 +43,7 @@ namespace Garden
         public bool IsBotEnabled => _isBotEnabled;
         public void EnableBot()  { _isBotEnabled = true;  _bot.Enable(); }
         public void DisableBot() { _isBotEnabled = false; _bot.Disable(); }
+        public void EvalLua(string code) => _bot.Eval(code);
 
         public FrameManager(string imageSavePath, LuaBot bot, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, RoiRecorder roiRecorder, RoiDetector roiDetector, WindowPositionManager windowPosManager, ScrcpyManager.GardenServer gardenServer)
         {
