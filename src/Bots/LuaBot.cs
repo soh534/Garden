@@ -27,6 +27,7 @@ namespace Garden.Bots
             _lua["queueActionAt"] = (Action<string, string>)((actionName, roiName) => QueueAction(actionName, roiName));
             _lua["getRoiScore"]   = (Func<string, double>)(roiName => GetRoiScore(roiName));
             _lua["roiVisible"]    = (Func<string, bool>)(name => RoiVisible(name));
+            _lua["log"]           = (Action<string>)(msg => Console.WriteLine($"[bot] {msg}"));
 
             _lua.DoFile(scriptPath);
 
