@@ -338,6 +338,7 @@ namespace Garden
                 savedRoiData = new();
             }
 
+            bool existed = savedRoiData.ContainsKey(roiName);
             savedRoiData[roiName] = new RoiData
             {
                 clickOffsetX = clickOffsetX,
@@ -349,7 +350,7 @@ namespace Garden
                 height = height,
                 fixedLocation = fixedLocation
             };
-            Console.WriteLine($"Overwriting existing ROI: {roiName}");
+            Console.WriteLine(existed ? $"Overwriting existing ROI: {roiName}" : $"Saved new ROI: {roiName}");
 
             var options = new JsonSerializerOptions { WriteIndented = true };
             string updatedJson = JsonSerializer.Serialize(savedRoiData, options);

@@ -45,11 +45,13 @@ namespace Garden.Bots
         private volatile bool _reloadPending = false;
         private volatile string? _pendingEval = null;
         private volatile bool _evaluating = false;
+        private volatile bool _abortEval = false;
         private readonly FileSystemWatcher _watcher;
         private DateTime _lastWatcherEvent = DateTime.MinValue;
         private CancellationToken _token;
 
         private class BotStoppedException : Exception { }
+        private class EvalAbortedException : Exception { }
 
         private static bool HasInChain<T>(Exception ex) where T : Exception
         {
@@ -63,7 +65,12 @@ namespace Garden.Bots
         private void CheckAbort()
         {
             _token.ThrowIfCancellationRequested();
-            if (!_enabled && !_evaluating) { throw new BotStoppedException(); }
+            if (_evaluating)
+            {
+                if (_abortEval) { throw new EvalAbortedException(); }
+                return;
+            }
+            if (!_enabled) { throw new BotStoppedException(); }
         }
 
         private void WaitMs(int ms)
@@ -82,6 +89,7 @@ namespace Garden.Bots
         public void Enable()   => _enabled = true;
         public void Disable()  => _enabled = false;
         public void Eval(string code) => _pendingEval = code;
+        public void AbortEval() => _abortEval = true;
 
         public void Dispose()
         {
@@ -99,6 +107,7 @@ namespace Garden.Bots
         private void RunEval(string code)
         {
             _evaluating = true;
+            _abortEval = false;
             try
             {
                 var results = _lua.DoString(code);
@@ -111,8 +120,12 @@ namespace Garden.Bots
                     Console.WriteLine("[lua] ok");
                 }
             }
-            catch (Exception ex) { Console.WriteLine($"[lua] error: {ex.Message}"); }
-            finally { _evaluating = false; }
+            catch (Exception ex)
+            {
+                if (HasInChain<EvalAbortedException>(ex)) { Console.WriteLine("[lua] aborted"); }
+                else { Console.WriteLine($"[lua] error: {ex.Message}"); }
+            }
+            finally { _evaluating = false; _abortEval = false; }
         }
 
         private void ReloadScript()

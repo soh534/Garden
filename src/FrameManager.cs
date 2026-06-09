@@ -44,6 +44,7 @@ namespace Garden
         public void EnableBot()  { _isBotEnabled = true;  _bot.Enable(); }
         public void DisableBot() { _isBotEnabled = false; _bot.Disable(); }
         public void EvalLua(string code) => _bot.Eval(code);
+        public void AbortLua() => _bot.AbortEval();
         public void SetScanEnabled(bool on) => _roiDetector.SetScanEnabled(on);
         public bool ScanEnabled => _roiDetector.ScanEnabled;
 

@@ -15,6 +15,9 @@ namespace Garden
         {
             _engine = new TesseractEngine(tessDataPath, "eng", EngineMode.Default);
             _engine.SetVariable("tessedit_char_whitelist", "0123456789");
+            // Silence Tesseract's internal diagnostic spew (STATS/baseline prints) by
+            // routing its debug output to the null device.
+            _engine.SetVariable("debug_file", "NUL");
             _debugDir = debugDir;
         }
 

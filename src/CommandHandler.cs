@@ -131,6 +131,11 @@ namespace Garden
                     else { Console.WriteLine("Usage: lua <code>"); }
                     return true;
 
+                case "abort":
+                    _frameManager.AbortLua();
+                    Console.WriteLine("Aborting lua eval...");
+                    return true;
+
                 case "scan":
                     if (verb == "on")       { _frameManager.SetScanEnabled(true);  Console.WriteLine("Scan ON."); }
                     else if (verb == "off") { _frameManager.SetScanEnabled(false); Console.WriteLine("Scan OFF."); }
@@ -157,6 +162,7 @@ namespace Garden
             Console.WriteLine("  roi record <name>           - Record an ROI and save it as <name>");
             Console.WriteLine("  roi record fixed <name>     - Record a fixed-location ROI (checked in place, no search)");
             Console.WriteLine("  lua <code>                  - Run Lua against the live bot state (debug)");
+            Console.WriteLine("  abort                       - Stop a running 'lua' eval");
             Console.WriteLine("  scan on | scan off          - Toggle the background detection scan / overlay");
             Console.WriteLine("  roi stop                    - Cancel ROI recording");
             Console.WriteLine("  roi list                    - List all ROIs");
