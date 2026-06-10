@@ -69,7 +69,7 @@ namespace Garden
         private volatile DetectionSnapshot _snapshot = new(null, null, new(), new(), new Dictionary<string, RoiScanResult>());
         public DetectionSnapshot Snapshot => _snapshot;
 
-        private volatile bool _scanEnabled = true;
+        private volatile bool _scanEnabled = false;
         public bool ScanEnabled => _scanEnabled;
         public void SetScanEnabled(bool on)
         {
@@ -395,6 +395,7 @@ namespace Garden
 
                     foreach (var name in names)
                     {
+                        if (!_scanEnabled) { break; }
                         Mat? matClone = null;
                         RoiData? roiData = null;
                         lock (_roiMatsLock)
@@ -424,6 +425,7 @@ namespace Garden
                                 }
                             }
                             var result = new RoiScanResult(score, detected, centerX, centerY, clickX, clickY, readings);
+                            if (!_scanEnabled) { break; }
                             var updated = new Dictionary<string, RoiScanResult>(_snapshot.LatestScores) { [name] = result };
                             _snapshot = new DetectionSnapshot(_snapshot.WaitingForRoi, _snapshot.WaitingRoiResult, _snapshot.OcrReadings, _snapshot.ReadAreaRects, updated);
                         }

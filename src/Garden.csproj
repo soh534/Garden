@@ -23,6 +23,9 @@
     <None Update="nlog.config">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="stdlib.lua">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include="..\config.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>config.json</Link>

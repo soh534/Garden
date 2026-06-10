@@ -1,5 +1,6 @@
 using NLog;
 using NLua;
+using System.Text.Json;
 
 namespace Garden.Bots
 {
@@ -28,6 +29,18 @@ namespace Garden.Bots
             _lua["getRoiScore"]   = (Func<string, double>)(roiName => GetRoiScore(roiName));
             _lua["roiVisible"]    = (Func<string, bool>)(name => RoiVisible(name));
             _lua["log"]           = (Action<string>)(msg => Console.WriteLine($"[bot] {msg}"));
+            _lua["stateSave"]     = (Action<LuaTable>)(t => StateSave(t));
+            _lua["stateLoad"]     = (Func<object?>)(StateLoad);
+
+            string stdlibPath = Path.Combine(AppContext.BaseDirectory, "stdlib.lua");
+            if (File.Exists(stdlibPath))
+            {
+                _lua.DoFile(stdlibPath);
+            }
+            else
+            {
+                Logger.Warn($"stdlib.lua not found at {stdlibPath}; stdlib combinators unavailable");
+            }
 
             _lua.DoFile(scriptPath);
 
@@ -128,6 +141,87 @@ namespace Garden.Bots
             }
             finally { _evaluating = false; _abortEval = false; }
         }
+
+        private string StatePath => Path.Combine(Path.GetDirectoryName(_scriptPath)!, "state.json");
+
+        // Persist a Lua table as JSON, atomically (temp file + rename) so a kill
+        // mid-write can never leave a corrupt state file.
+        private void StateSave(LuaTable table)
+        {
+            try
+            {
+                string json = JsonSerializer.Serialize(LuaToObject(table), new JsonSerializerOptions { WriteIndented = true });
+                string tmp = StatePath + ".tmp";
+                File.WriteAllText(tmp, json);
+                File.Move(tmp, StatePath, true);
+            }
+            catch (Exception ex) { Logger.Error($"stateSave failed: {ex.Message}"); }
+        }
+
+        private object? StateLoad()
+        {
+            try
+            {
+                if (!File.Exists(StatePath)) { return null; }
+                using var doc = JsonDocument.Parse(File.ReadAllText(StatePath));
+                return JsonToLua(doc.RootElement);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"stateLoad failed: {ex.Message}");
+                return null;
+            }
+        }
+
+        private static object? LuaToObject(object? value)
+        {
+            if (value is LuaTable t)
+            {
+                var dict = new Dictionary<string, object?>();
+                foreach (var key in t.Keys)
+                {
+                    dict[key.ToString()!] = LuaToObject(t[key]);
+                }
+                return dict;
+            }
+            return value;
+        }
+
+        // JSON object keys that parse as integers come back as numeric Lua keys,
+        // so tables keyed by account number round-trip correctly.
+        private object? JsonToLua(JsonElement el)
+        {
+            switch (el.ValueKind)
+            {
+                case JsonValueKind.Object:
+                {
+                    LuaTable t = NewTable();
+                    foreach (var prop in el.EnumerateObject())
+                    {
+                        object key = long.TryParse(prop.Name, out long n) ? n : prop.Name;
+                        t[key] = JsonToLua(prop.Value);
+                    }
+                    return t;
+                }
+                case JsonValueKind.Array:
+                {
+                    LuaTable t = NewTable();
+                    long i = 1;
+                    foreach (var item in el.EnumerateArray())
+                    {
+                        t[i++] = JsonToLua(item);
+                    }
+                    return t;
+                }
+                case JsonValueKind.String: return el.GetString();
+                case JsonValueKind.Number: return el.TryGetInt64(out long l) ? l : el.GetDouble();
+                case JsonValueKind.True: return true;
+                case JsonValueKind.False: return false;
+                default: return null;
+            }
+        }
+
+        private LuaTable NewTable() => (LuaTable)_lua.DoString("return {}")[0];
 
         private void ReloadScript()
         {
