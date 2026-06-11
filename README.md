@@ -48,10 +48,14 @@ cd src
 dotnet run
 ```
 
-`setup.ps1` prompts for two environment variables:
+Environment variables:
 
 - `GARDEN_DATA` — path to a directory holding your ROIs, actions, and Lua script
 - `TESSDATA_PREFIX` — directory holding `tessdata/` for Tesseract
+- `GARDEN_STATE_DIR` *(optional)* — where runtime state lives (`state.json`,
+  detection log). Unset, it sits next to the script. Point it at a synced
+  folder (e.g. OneDrive) to share bot state between machines — data is
+  durable and versioned; state is mutable runtime memory.
 
 A phone with USB debugging enabled and authorized must be connected
 (`adb devices` should show `device`, not `unauthorized`).
@@ -63,18 +67,24 @@ Typed into the console while running:
 | Command | Description |
 |---------|-------------|
 | `roi record <name>` | Record an ROI by dragging a box on the capture window |
+| `roi record fixed <name>` | Record a fixed-location ROI (matched in place, no search — for small/ambiguous targets) |
 | `roi stop` | Cancel ROI recording |
 | `roi list` | List all ROIs |
 | `roi remove <name>` | Delete an ROI and its image |
-| `action record <name>` | Record a touch action (linear) |
-| `action record path <name>` | Record a touch action (freehand path) |
+| `roi rename <old> <new>` | Rename an ROI (image + metadata) |
+| `action record <name>` | Record a touch action (linear clicks) |
+| `action record path <name>` | Record a touch action (freehand path — required for swipes/gestures) |
 | `action reset` | Clear the current recording buffer |
 | `action stop` | Stop recording and save |
 | `action replay <name>` | Replay a saved action |
 | `action list` | List all actions |
 | `action remove <name>` | Delete an action |
 | `image save <file.png>` | Save a screenshot of the current frame |
+| `lua <code>` | Run Lua against the live bot state (REPL; runs on the bot thread) |
+| `abort` | Cancel a running `lua` eval |
+| `scan on` / `scan off` | Toggle the background detection scan / overlay (default off) |
 | `bot start` / `bot stop` | Start/stop bot automation |
+| `help` | Show command help |
 | `quit` | Exit |
 
 ## Scripting
@@ -97,28 +107,70 @@ function main()
 end
 ```
 
-### Lua API
+### Lua API (engine bindings)
 
 | Function | Description |
 |----------|-------------|
-| `roiVisible(name)` → bool | True if the ROI is currently detected |
+| `roiVisible(name)` → bool | True if the ROI is currently detected (also triggers its OCR read-areas) |
 | `queueAction(name)` | Replay an action at its recorded coordinates |
 | `queueActionAt(name, roi)` | Replay an action offset to the ROI's click point |
 | `getRoiScore(name)` → number | Raw match score (lower = better match) |
-| `getOcrInt(key)` → int | Read an integer from a configured OCR read-area |
-| `waitMs(ms)` | Block the bot thread (cancellable by `quit`/`bot stop`) |
+| `getOcrInt(key)` → int | Read an integer from an OCR read-area (`key` = `"roiName/areaName"`); −1 if unread |
+| `waitMs(ms)` | Block the bot thread (cancellable by `quit`/`bot stop`/`abort`) |
 | `queueWait(ms)` | Enqueue a pause in the action queue |
+| `log(msg)` | Print `[bot] msg` to the console |
+| `stateSave(table)` | Persist a Lua table as JSON, atomically (temp file + rename) |
+| `stateLoad()` → table\|nil | Load the persisted state; numeric keys round-trip correctly |
 
-The script hot-reloads — edits are picked up live without restarting. Both
-`quit` and `bot stop` cleanly unwind `main()` even from inside a `while` loop
-(via a cancellation exception threaded through the bindings).
+### stdlib (engine-shipped Lua combinators)
+
+`stdlib.lua` loads before the user script — generic idioms composed from the
+primitives above. Action names are parameters, never assumptions:
+
+| Function | Description |
+|----------|-------------|
+| `doIf(roi, action, ms)` → bool | If the ROI is visible: replay action at it, wait, return true |
+| `repeatUntilVisible(action, roi, tries, ms)` | Repeat an action until a target ROI appears (capped) |
+| `drainWhileVisible(roi, action, ms)` | Repeat an action while an ROI remains visible |
+
+The script hot-reloads — edits are picked up live without restarting (note:
+script-local variables re-initialize on every reload). Both `quit` and
+`bot stop` cleanly unwind `main()` even from inside a `while` loop (via a
+cancellation exception threaded through the bindings).
+
+## State persistence
+
+`stateSave`/`stateLoad` give scripts crash-safe memory: a single JSON file
+(`state.json` in `GARDEN_STATE_DIR`, or next to the script), written atomically
+on every save so a kill mid-write can never corrupt it. Disk is always current,
+so a hot-reload or restart resumes from up-to-date state.
+
+## Detection flight recorder
+
+Every `roiVisible` result (HIT/miss + match score) is appended to
+`roi_detections.log` alongside `state.json` — a rolling trace of the bot's
+recent perception. Consecutive repeats of the same (roi, outcome) collapse
+into a `repeated xN` line so poll loops don't flush real history. The file
+rotates at 10KB into `roi_detections.old`; total disk is bounded and logging
+never needs to stop. Reading scores: a miss just above the threshold is a
+near-miss (template/threshold problem — the thing is on screen); a high score
+means genuinely absent.
 
 ## Live overlay
 
-The capture window shows, below the FPS counter, every ROI's current match
-score updated by a background scan thread (~5 Hz, independent of bot state).
-Detected ROIs are colored and boxed so you can tune templates and thresholds
-in real time.
+With `scan on`, the capture window shows every ROI's current match score,
+updated by a background scan thread independent of bot state. Detected ROIs
+are colored and boxed, with OCR read-area results and click points drawn, so
+you can tune templates and thresholds in real time. Off by default — the bot's
+own detection does not depend on it.
+
+## OCR read-areas
+
+An ROI can carry named read-areas (rectangles relative to the ROI) whose
+contents are OCR'd (digit-whitelisted) whenever the ROI is detected. Results
+are read from Lua via `getOcrInt("roiName/areaName")`. Size read boxes
+generously and validate/parse in script — overshoot is recoverable, undershoot
+truncates.
 
 ## Key design notes
 
@@ -127,6 +179,13 @@ in real time.
 - **`TM_SQDIFF_NORMED`** — 0 is a perfect match. Lower scores mean better matches.
 - **Template quality matters more than threshold tuning** — larger, distinctive
   templates give a much wider on/off-screen score gap than small ambiguous ones.
+- **Fixed-location ROIs** — for small or ambiguous targets, record with
+  `roi record fixed`: the template is matched only at its recorded position,
+  eliminating false positives from whole-frame search.
 - **Input types** — left-click replays as a phone touch event; right-click
   replays as an Android `BACK` key. Both go directly through the scrcpy control
-  socket.
+  socket. Gestures (swipes, holds) must be recorded with `action record path` —
+  linear recordings carry no movement events and won't register as gestures.
+- **Single-threaded ffmpeg decode (`-threads 1`)** — frame-threading buffers
+  frames and adds latency proportional to thread count; single-threaded decode
+  emits each frame immediately, keeping detection in lock-step with the phone.
