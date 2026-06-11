@@ -142,7 +142,19 @@ namespace Garden.Bots
             finally { _evaluating = false; _abortEval = false; }
         }
 
-        private string StatePath => Path.Combine(Path.GetDirectoryName(_scriptPath)!, "state.json");
+        // State lives next to the script unless GARDEN_STATE_DIR points elsewhere
+        // (e.g. a synced folder shared between machines). Data (scripts, ROIs,
+        // actions) is durable and versioned; state is mutable runtime memory.
+        private string StatePath
+        {
+            get
+            {
+                string? dir = Environment.GetEnvironmentVariable("GARDEN_STATE_DIR");
+                if (string.IsNullOrEmpty(dir)) { return Path.Combine(Path.GetDirectoryName(_scriptPath)!, "state.json"); }
+                Directory.CreateDirectory(dir);
+                return Path.Combine(dir, "state.json");
+            }
+        }
 
         // Persist a Lua table as JSON, atomically (temp file + rename) so a kill
         // mid-write can never leave a corrupt state file.
