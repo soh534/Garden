@@ -122,11 +122,72 @@ namespace Garden
             {
                 bool found = TryFindRoiInFrame(frame, name, out info);
                 _snapshot = new DetectionSnapshot(name, found ? info : null, _snapshot.OcrReadings, _snapshot.ReadAreaRects, _snapshot.LatestScores);
+                LogDetection(name, found, info);
                 return found;
             }
             finally
             {
                 frame.Dispose();
+            }
+        }
+
+        // --- Detection flight recorder ------------------------------------
+        // Every TryFindRoi result is appended to roi_detections.log so the
+        // tail always shows the bot's recent perception. Consecutive repeats
+        // of the same (roi, outcome) collapse into a "repeated xN" line so
+        // poll loops don't flush real history. Rotated at 10KB into
+        // roi_detections.old -- total disk is bounded, logging never stops.
+        private readonly object _detLogLock = new();
+        private string? _detLogLastKey;
+        private int _detLogRepeat;
+        private const long DetLogMaxBytes = 10 * 1024;
+
+        private string DetLogDir
+        {
+            get
+            {
+                string? dir = Environment.GetEnvironmentVariable("GARDEN_STATE_DIR");
+                if (!string.IsNullOrEmpty(dir)) { return dir; }
+                return Path.GetDirectoryName(_roiDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))!;
+            }
+        }
+
+        private void LogDetection(string name, bool found, DetectedRoiInfo info)
+        {
+            lock (_detLogLock)
+            {
+                string key = name + "|" + found;
+                if (key == _detLogLastKey)
+                {
+                    _detLogRepeat++;
+                    return;
+                }
+                if (_detLogRepeat > 1)
+                {
+                    AppendDetLog($"                     ... repeated x{_detLogRepeat}");
+                }
+                _detLogLastKey = key;
+                _detLogRepeat = 1;
+                string score = info.RoiName == null ? "n/a" : info.Score.ToString("F4");
+                AppendDetLog($"{DateTime.Now:MM-dd HH:mm:ss}  {(found ? "HIT " : "miss")}  {name}  score={score}");
+            }
+        }
+
+        private void AppendDetLog(string line)
+        {
+            try
+            {
+                string path = Path.Combine(DetLogDir, "roi_detections.log");
+                var fi = new FileInfo(path);
+                if (fi.Exists && fi.Length > DetLogMaxBytes)
+                {
+                    File.Move(path, Path.Combine(DetLogDir, "roi_detections.old"), true);
+                }
+                File.AppendAllText(path, line + Environment.NewLine);
+            }
+            catch
+            {
+                // the recorder must never break detection
             }
         }
 
