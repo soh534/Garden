@@ -28,7 +28,11 @@ namespace Garden.Bots
             _lua["queueActionAt"] = (Action<string, string>)((actionName, roiName) => QueueAction(actionName, roiName));
             _lua["getRoiScore"]   = (Func<string, double>)(roiName => GetRoiScore(roiName));
             _lua["roiVisible"]    = (Func<string, bool>)(name => RoiVisible(name));
-            _lua["log"]           = (Action<string>)(msg => Console.WriteLine($"[bot] {msg}"));
+            _lua["log"]           = (Action<string>)(msg =>
+            {
+                Console.WriteLine($"[bot] {msg}");
+                _roiDetector.LogEvent(msg);
+            });
             _lua["stateSave"]     = (Action<LuaTable>)(t => StateSave(t));
             _lua["stateLoad"]     = (Func<object?>)(StateLoad);
 
@@ -242,8 +246,13 @@ namespace Garden.Bots
                 _lua.DoFile(_scriptPath);
                 _reloadPending = false;
                 Console.WriteLine("[LuaBot] gardenbot.lua reloaded.");
+                _roiDetector.LogEvent("(engine) gardenbot.lua reloaded");
             }
-            catch (Exception ex) { Logger.Error($"Reload failed: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                Logger.Error($"Reload failed: {ex.Message}");
+                _roiDetector.LogEvent($"(engine) RELOAD FAILED: {ex.Message}");
+            }
         }
 
         private bool RoiVisible(string name)
@@ -334,7 +343,11 @@ namespace Garden.Bots
                 {
                     if (HasInChain<OperationCanceledException>(ex)) { break; }
                     if (HasInChain<BotStoppedException>(ex)) { /* bot stop: loop idles */ }
-                    else { Logger.Error($"Bot error: {ex.Message}"); }
+                    else
+                    {
+                        Logger.Error($"Bot error: {ex.Message}");
+                        _roiDetector.LogEvent($"(engine) BOT ERROR: {ex.Message}");
+                    }
                 }
                 Thread.Sleep(100);
             }

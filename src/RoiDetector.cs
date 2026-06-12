@@ -173,6 +173,23 @@ namespace Garden
             }
         }
 
+        // Mirror a console message (script log(), bot errors, reloads) into the
+        // flight recorder so decisions and detections interleave in one
+        // remotely-readable stream. Flushes any pending repeat-collapse first.
+        public void LogEvent(string msg)
+        {
+            lock (_detLogLock)
+            {
+                if (_detLogRepeat > 1)
+                {
+                    AppendDetLog($"                     ... repeated x{_detLogRepeat}");
+                }
+                _detLogLastKey = null;
+                _detLogRepeat = 0;
+                AppendDetLog($"{DateTime.Now:MM-dd HH:mm:ss}  [bot] {msg}");
+            }
+        }
+
         private void AppendDetLog(string line)
         {
             try
