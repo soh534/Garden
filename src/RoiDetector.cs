@@ -140,7 +140,7 @@ namespace Garden
         private readonly object _detLogLock = new();
         private string? _detLogLastKey;
         private int _detLogRepeat;
-        private const long DetLogMaxBytes = 10 * 1024;
+        private const long DetLogMaxBytes = 64 * 1024;
 
         private string DetLogDir
         {
