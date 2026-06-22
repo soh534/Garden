@@ -24,6 +24,7 @@ namespace Garden.Bots
             _lua["queueWait"]     = (Action<int>)(ms => _actionPlayer.QueueWait(ms));
             _lua["waitMs"]        = (Action<int>)(ms => WaitMs(ms));
             _lua["getOcrInt"]     = (Func<string, int>)(key => GetOcrInt(key));
+            _lua["getOcrStr"]     = (Func<string, string>)(key => GetOcrStr(key));
             _lua["queueAction"]   = (Action<string>)(actionName => QueueAction(actionName, null));
             _lua["queueActionAt"] = (Action<string, string>)((actionName, roiName) => QueueAction(actionName, roiName));
             _lua["getRoiScore"]   = (Func<string, double>)(roiName => GetRoiScore(roiName));
@@ -298,12 +299,27 @@ namespace Garden.Bots
         private int GetOcrInt(string key)
         {
             var snapshot = _roiDetector.Snapshot;
-            if (snapshot.OcrReadings.TryGetValue(key, out int value))
+            if (snapshot.OcrReadings.TryGetValue(key, out string? text) && text != null)
             {
-                return value;
+                string digits = "";
+                foreach (char c in text) { if (c >= '0' && c <= '9') { digits += c; } }
+                if (digits.Length > 0 && int.TryParse(digits, out int value)) { return value; }
+                Logger.Warn($"getOcrInt: no digits in '{text}' for key '{key}'");
+                return -1;
             }
             Logger.Warn($"getOcrInt: key '{key}' not found in OCR readings");
             return -1;
+        }
+
+        private string GetOcrStr(string key)
+        {
+            var snapshot = _roiDetector.Snapshot;
+            if (snapshot.OcrReadings.TryGetValue(key, out string? text) && text != null)
+            {
+                return text;
+            }
+            Logger.Warn($"getOcrStr: key '{key}' not found in OCR readings");
+            return "";
         }
 
         private double GetRoiScore(string roiName)

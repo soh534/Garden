@@ -40,7 +40,7 @@ namespace Garden
         public record DetectionSnapshot(
             string? WaitingForRoi,
             DetectedRoiInfo? WaitingRoiResult,
-            Dictionary<string, int> OcrReadings,
+            Dictionary<string, string> OcrReadings,
             Dictionary<string, Rect> ReadAreaRects,
             Dictionary<string, RoiScanResult> LatestScores
         );
@@ -49,7 +49,7 @@ namespace Garden
             double Score, bool Detected,
             int CenterX, int CenterY,
             int ClickX, int ClickY,
-            Dictionary<string, int> Readings);
+            Dictionary<string, string> Readings);
 
         public const double TemplateThreshold = 0.005;
 
@@ -81,7 +81,7 @@ namespace Garden
             }
         }
 
-        public RoiDetector(string roiDirectory, string debugDir)
+        public RoiDetector(string roiDirectory, string debugDir, string ocrLang)
         {
             string tessPrefix = Environment.GetEnvironmentVariable("TESSDATA_PREFIX")
                 ?? throw new InvalidOperationException("TESSDATA_PREFIX environment variable is not set. Run setup.ps1.");
@@ -91,7 +91,7 @@ namespace Garden
                 throw new InvalidOperationException($"tessdata directory not found at {tessDataPath}. Run setup.ps1 to download language data.");
             }
 
-            _ocrReader = new OcrReader(tessDataPath, debugDir);
+            _ocrReader = new OcrReader(tessDataPath, debugDir, ocrLang);
             _roiDirectory = roiDirectory;
             LoadRoiData();
             LoadRoiMats();
@@ -284,7 +284,7 @@ namespace Garden
                     int minLocX = roiInfo.Center.X - roiMat.Width / 2;
                     int minLocY = roiInfo.Center.Y - roiMat.Height / 2;
 
-                    var ocrReadings = new Dictionary<string, int>();
+                    var ocrReadings = new Dictionary<string, string>();
                     var readAreaRects = new Dictionary<string, Rect>();
 
                     foreach (var readArea in roiData.readAreas)
@@ -305,7 +305,7 @@ namespace Garden
                         var readRect = new Rect(areaX, areaY, areaW, areaH);
                         readAreaRects[key] = readRect;
                         using Mat readMat = new Mat(frame, readRect);
-                        ocrReadings[key] = _ocrReader.ReadInt(readMat);
+                        ocrReadings[key] = _ocrReader.Read(readMat);
                     }
 
                     _snapshot = new DetectionSnapshot(_snapshot.WaitingForRoi, _snapshot.WaitingRoiResult, ocrReadings, readAreaRects, _snapshot.LatestScores);
@@ -488,7 +488,7 @@ namespace Garden
                             bool detected = score < TemplateThreshold;
                             int clickX = roiData.clickOffsetX.HasValue ? minLocX + roiData.clickOffsetX.Value : centerX;
                             int clickY = roiData.clickOffsetY.HasValue ? minLocY + roiData.clickOffsetY.Value : centerY;
-                            var readings = new Dictionary<string, int>();
+                            var readings = new Dictionary<string, string>();
                             if (detected && roiData.readAreas.Count > 0)
                             {
                                 foreach (var ra in roiData.readAreas)
@@ -499,7 +499,7 @@ namespace Garden
                                     int ah = Math.Min(ra.height, frame.Height - ay);
                                     if (aw <= 0 || ah <= 0) { continue; }
                                     using Mat readMat = new Mat(frame, new Rect(ax, ay, aw, ah));
-                                    readings[ra.name] = _ocrReader.ReadInt(readMat);
+                                    readings[ra.name] = _ocrReader.Read(readMat);
                                 }
                             }
                             var result = new RoiScanResult(score, detected, centerX, centerY, clickX, clickY, readings);
