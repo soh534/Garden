@@ -31,7 +31,7 @@ namespace Garden.Bots
             _lua["roiVisible"]    = (Func<string, bool>)(name => RoiVisible(name));
             _lua["log"]           = (Action<string>)(msg =>
             {
-                Console.WriteLine($"[bot] {msg}");
+                Console.WriteLine($"{DateTime.Now:MM-dd HH:mm:ss}  [bot] {msg}");
                 _roiDetector.LogEvent(msg);
             });
             _lua["stateSave"]     = (Action<LuaTable>)(t => StateSave(t));
