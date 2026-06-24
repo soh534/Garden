@@ -108,6 +108,24 @@ namespace Garden
                         case "rename":
                             HandleRenameRoiCommand(command);
                             break;
+                        case "fixed":
+                            if (parts.Length < 3) { Console.WriteLine("Usage: roi fixed <name>"); break; }
+                            _roiRecorder.ToggleFixed(parts[2]);
+                            break;
+                        case "clickpoint":
+                            if (parts.Length < 3) { Console.WriteLine("Usage: roi clickpoint <name>"); break; }
+                            _roiRecorder.EditClickPoint(parts[2]);
+                            break;
+                        case "box":
+                            if (parts.Length < 3) { Console.WriteLine("Usage: roi box <name>"); break; }
+                            _roiRecorder.EditBox(parts[2]);
+                            break;
+                        case "readarea":
+                            if (parts.Length < 4) { Console.WriteLine("Usage: roi readarea <name> add | roi readarea <name> remove <area>"); break; }
+                            if (parts[3].ToLowerInvariant() == "add") { _roiRecorder.AddReadArea(parts[2]); }
+                            else if (parts[3].ToLowerInvariant() == "remove" && parts.Length >= 5) { _roiRecorder.RemoveReadArea(parts[2], parts[4]); }
+                            else { Console.WriteLine("Usage: roi readarea <name> add | roi readarea <name> remove <area>"); }
+                            break;
                     }
                     return true;
 
@@ -168,6 +186,11 @@ namespace Garden
             Console.WriteLine("  roi list                    - List all ROIs");
             Console.WriteLine("  roi remove <roi_name>       - Remove an ROI and its image");
             Console.WriteLine("  roi rename <old> <new>      - Rename an ROI (image + metadata)");
+            Console.WriteLine("  roi fixed <name>            - Toggle an ROI's fixedLocation flag");
+            Console.WriteLine("  roi clickpoint <name>       - Re-set the clickpoint (then click the target)");
+            Console.WriteLine("  roi box <name>              - Re-draw the box (then drag); re-crops, keeps clickpoint/read areas");
+            Console.WriteLine("  roi readarea <name> add     - Add a read area (then drag + name it)");
+            Console.WriteLine("  roi readarea <name> remove <area> - Remove a read area");
             Console.WriteLine("  bot start                   - Start the bot automation");
             Console.WriteLine("  bot stop                    - Stop the bot automation");
             Console.WriteLine("  help                        - Show this help message");

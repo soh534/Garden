@@ -42,6 +42,7 @@ namespace Garden
         private volatile CaptureMode _captureMode = CaptureMode.None;
         private volatile bool _captureReady = false;
         private Mat? _currentFrame = null;
+        private readonly object _currentFrameLock = new();
 
         private record RoiCapture(Mat RoiMat, Mat FullFrame, int X, int Y, int Width, int Height, string? PendingName, bool Fixed);
         private readonly BlockingCollection<RoiCapture> _captureQueue = new(boundedCapacity: 1);
@@ -133,8 +134,11 @@ namespace Garden
 
         public void SetCurrentFrame(Mat frame)
         {
-            _currentFrame?.Dispose();
-            _currentFrame = frame.Clone();
+            lock (_currentFrameLock)
+            {
+                _currentFrame?.Dispose();
+                _currentFrame = frame.Clone();
+            }
         }
 
         public Rect? GetCurrentRoi()
@@ -448,6 +452,157 @@ namespace Garden
                 Console.WriteLine($"Error renaming ROI: {ex.Message}");
                 throw;
             }
+        }
+
+        // ---- editing already-saved ROIs in place. Each patches roi_metadata.json;
+        // the detector's FileSystemWatcher reloads it live. ----
+
+        private bool LoadRoi(string roiName, out SavedRoiData saved, out RoiData roi)
+        {
+            saved = new();
+            roi = null!;
+            string path = Path.Combine(_saveDirectory, "roi_metadata.json");
+            if (!File.Exists(path)) { Console.WriteLine("roi_metadata.json not found"); return false; }
+            saved = JsonSerializer.Deserialize<SavedRoiData>(File.ReadAllText(path)) ?? new();
+            if (!saved.TryGetValue(roiName, out roi!)) { Console.WriteLine($"ROI '{roiName}' not found in metadata"); return false; }
+            return true;
+        }
+
+        private void SaveRois(SavedRoiData saved)
+        {
+            string path = Path.Combine(_saveDirectory, "roi_metadata.json");
+            File.WriteAllText(path, JsonSerializer.Serialize(saved, new JsonSerializerOptions { WriteIndented = true }));
+            Console.WriteLine($"Metadata updated in {path}");
+        }
+
+        public void ToggleFixed(string roiName)
+        {
+            if (!LoadRoi(roiName, out var saved, out var roi)) { return; }
+            roi.fixedLocation = !roi.fixedLocation;
+            SaveRois(saved);
+            Console.WriteLine($"'{roiName}' fixedLocation = {roi.fixedLocation}");
+        }
+
+        public void RemoveReadArea(string roiName, string areaName)
+        {
+            if (!LoadRoi(roiName, out var saved, out var roi)) { return; }
+            if (roi.readAreas.RemoveAll(a => a.name == areaName) == 0)
+            {
+                Console.WriteLine($"read area '{areaName}' not found on '{roiName}'");
+                return;
+            }
+            SaveRois(saved);
+            Console.WriteLine($"removed read area '{areaName}' from '{roiName}'");
+        }
+
+        // Capture-based edits run on their own thread: enable the mouse hooks
+        // (base.StartRecording), capture a click/drag with the same WaitForCapture
+        // the recorder uses, patch the one field, then stop.
+        public void EditClickPoint(string roiName)
+        {
+            if (_isRecording || _isPrompting) { Console.WriteLine("Finish the current recording/edit first."); return; }
+            if (!LoadRoi(roiName, out var saved, out var roi)) { return; }
+            int boxX = roi.x, boxY = roi.y;
+            base.StartRecording();   // install the WH_MOUSE_LL hook on THIS (message-pump) thread
+            Console.WriteLine($"Click the new target point for '{roiName}' on the frame...");
+            new Thread(() =>
+            {
+                using var cts = new CancellationTokenSource();
+                try
+                {
+                    var (sx, sy, _, _) = WaitForCapture(CaptureMode.ClickPoint, cts.Token);
+                    var (fx, fy) = ScaleToFrame(sx, sy);
+                    roi.clickOffsetX = fx - boxX;
+                    roi.clickOffsetY = fy - boxY;
+                    SaveRois(saved);
+                    Console.WriteLine($"'{roiName}' click point set at offset ({roi.clickOffsetX}, {roi.clickOffsetY})");
+                }
+                catch (Exception ex) { Console.WriteLine($"clickpoint edit failed: {ex.Message}"); }
+                finally { StopRecording(); }
+            }) { IsBackground = true, Name = "RoiRecorder.EditClickPoint" }.Start();
+        }
+
+        public void AddReadArea(string roiName)
+        {
+            if (_isRecording || _isPrompting) { Console.WriteLine("Finish the current recording/edit first."); return; }
+            if (!LoadRoi(roiName, out var saved, out var roi)) { return; }
+            int boxX = roi.x, boxY = roi.y;
+            base.StartRecording();   // install the WH_MOUSE_LL hook on THIS (message-pump) thread
+            Console.WriteLine($"Drag the read-area box for '{roiName}' on the frame...");
+            new Thread(() =>
+            {
+                using var cts = new CancellationTokenSource();
+                try
+                {
+                    var (sx, sy, ex, ey) = WaitForCapture(CaptureMode.BoundingBox, cts.Token);
+                    var (fx1, fy1) = ScaleToFrame(Math.Min(sx, ex), Math.Min(sy, ey));
+                    var (fx2, fy2) = ScaleToFrame(Math.Max(sx, ex), Math.Max(sy, ey));
+                    int rx = fx1 - boxX, ry = fy1 - boxY, rw = fx2 - fx1, rh = fy2 - fy1;
+                    if (rw <= 0 || rh <= 0) { Console.WriteLine("read area too small; aborted"); return; }
+
+                    _isPrompting = true;
+                    Console.Write("Enter read area name: ");
+                    string name = _promptInput.Take(cts.Token);
+                    _isPrompting = false;
+                    if (string.IsNullOrWhiteSpace(name)) { Console.WriteLine("empty name; aborted"); return; }
+
+                    roi.readAreas.Add(new RoiData.ReadArea { name = name, x = rx, y = ry, width = rw, height = rh });
+                    SaveRois(saved);
+                    Console.WriteLine($"added read area '{name}' to '{roiName}' at offset ({rx},{ry}) [{rw}x{rh}]");
+                }
+                catch (Exception ex) { Console.WriteLine($"readarea add failed: {ex.Message}"); }
+                finally { _isPrompting = false; StopRecording(); }
+            }) { IsBackground = true, Name = "RoiRecorder.AddReadArea" }.Start();
+        }
+
+        // Re-draw the box + re-crop the template; recompute clickpoint/read-area
+        // offsets against the new box origin so they keep their absolute position.
+        public void EditBox(string roiName)
+        {
+            if (_isRecording || _isPrompting) { Console.WriteLine("Finish the current recording/edit first."); return; }
+            if (!LoadRoi(roiName, out var saved, out var roi)) { return; }
+            int oldX = roi.x, oldY = roi.y;
+            base.StartRecording();   // install the WH_MOUSE_LL hook on THIS (message-pump) thread
+            Console.WriteLine($"Drag the new bounding box for '{roiName}' on the frame...");
+            new Thread(() =>
+            {
+                using var cts = new CancellationTokenSource();
+                try
+                {
+                    var (sx, sy, ex, ey) = WaitForCapture(CaptureMode.BoundingBox, cts.Token);
+                    var (fx1, fy1) = ScaleToFrame(Math.Min(sx, ex), Math.Min(sy, ey));
+                    var (fx2, fy2) = ScaleToFrame(Math.Max(sx, ex), Math.Max(sy, ey));
+                    int nx = fx1, ny = fy1, nw = fx2 - fx1, nh = fy2 - fy1;
+
+                    Mat? frame;
+                    lock (_currentFrameLock) { frame = _currentFrame?.Clone(); }
+                    if (frame == null) { Console.WriteLine("no frame available; aborted"); return; }
+                    using (frame)
+                    {
+                        nx = Math.Max(0, Math.Min(nx, frame.Width - 1));
+                        ny = Math.Max(0, Math.Min(ny, frame.Height - 1));
+                        nw = Math.Min(nw, frame.Width - nx);
+                        nh = Math.Min(nh, frame.Height - ny);
+                        if (nw <= 0 || nh <= 0) { Console.WriteLine("box too small / out of bounds; aborted"); return; }
+                        using var sub = new Mat(frame, new Rect(nx, ny, nw, nh));
+                        Cv2.ImWrite(Path.Combine(_saveDirectory, $"{roiName}.png"), sub);
+                    }
+
+                    // keep clickpoint + read areas at the same absolute position
+                    if (roi.clickOffsetX.HasValue) { roi.clickOffsetX = (oldX + roi.clickOffsetX.Value) - nx; }
+                    if (roi.clickOffsetY.HasValue) { roi.clickOffsetY = (oldY + roi.clickOffsetY.Value) - ny; }
+                    foreach (var ra in roi.readAreas)
+                    {
+                        ra.x = (oldX + ra.x) - nx;
+                        ra.y = (oldY + ra.y) - ny;
+                    }
+                    roi.x = nx; roi.y = ny; roi.width = nw; roi.height = nh;
+                    SaveRois(saved);
+                    Console.WriteLine($"'{roiName}' box redrawn to ({nx},{ny}) [{nw}x{nh}]; template re-cropped");
+                }
+                catch (Exception ex) { Console.WriteLine($"box edit failed: {ex.Message}"); }
+                finally { StopRecording(); }
+            }) { IsBackground = true, Name = "RoiRecorder.EditBox" }.Start();
         }
 
         public override void Dispose()
