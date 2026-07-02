@@ -9,6 +9,10 @@ namespace Garden
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private readonly TesseractEngine _engine;
         private readonly string _debugDir;
+        private readonly string _ringDir;
+        private readonly string?[] _ringFiles = new string?[RingSize];
+        private int _ringSeq;
+        private const int RingSize = 64;
         private readonly object _engineLock = new();
 
         public OcrReader(string tessDataPath, string debugDir, string lang)
@@ -23,6 +27,9 @@ namespace Garden
             // routing its debug output to the null device.
             _engine.SetVariable("debug_file", "NUL");
             _debugDir = debugDir;
+            _ringDir = Path.Combine(debugDir, "ocr_ring");
+            if (Directory.Exists(_ringDir)) { Directory.Delete(_ringDir, true); }
+            Directory.CreateDirectory(_ringDir);
             Logger.Info($"OCR engine: lang={lang}");
         }
 
@@ -38,18 +45,14 @@ namespace Garden
                 using Mat thresholded = new Mat();
                 Cv2.Threshold(gray, thresholded, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
 
-                if (!string.IsNullOrEmpty(debugKey))
-                {
-                    string path = Path.Combine(_debugDir, $"ocr_{debugKey.Replace("/", "_")}.png");
-                    thresholded.SaveImage(path);
-                }
-
                 byte[] pngBytes = thresholded.ToBytes(".png");
                 lock (_engineLock)
                 {
                     using var pix = Pix.LoadFromMemory(pngBytes);
                     using var page = _engine.Process(pix, PageSegMode.SingleWord);
-                    return NormalizeDigits(page.GetText().Trim());
+                    string text = NormalizeDigits(page.GetText().Trim());
+                    if (!string.IsNullOrEmpty(debugKey)) { RingSave(debugKey, gray, thresholded, text); }
+                    return text;
                 }
             }
             catch (Exception ex)
@@ -74,6 +77,39 @@ namespace Garden
                 else { sb.Append(c); }
             }
             return sb.ToString();
+        }
+
+        // Always-on OCR forensics: every keyed read drops what Tesseract saw
+        // (raw gray stacked over thresholded) into a fixed-size ring, with the
+        // key and result in the filename. When a read turns out wrong hours
+        // later, the evidence is already on disk -- the flight-recorder
+        // philosophy, in pixels. ~64 small crops, disk bounded.
+        private void RingSave(string key, Mat gray, Mat thresholded, string result)
+        {
+            try
+            {
+                int slot = _ringSeq % RingSize;
+                if (_ringFiles[slot] != null) { File.Delete(_ringFiles[slot]!); }
+                string path = Path.Combine(_ringDir, $"{_ringSeq:D5}_{Sanitize(key)}={Sanitize(result)}.png");
+                using Mat stacked = new Mat();
+                Cv2.VConcat(new[] { gray, thresholded }, stacked);
+                stacked.SaveImage(path);
+                _ringFiles[slot] = path;
+                _ringSeq++;
+            }
+            catch (Exception ex) { Logger.Warn($"ocr ring save failed: {ex.Message}"); }
+        }
+
+        private static string Sanitize(string s)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (char c in s)
+            {
+                sb.Append(char.IsLetterOrDigit(c) ? c : '_');
+            }
+            string t = sb.ToString();
+            if (t.Length == 0) { t = "EMPTY"; }
+            return t.Length > 24 ? t.Substring(0, 24) : t;
         }
 
         public void Dispose()

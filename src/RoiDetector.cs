@@ -305,7 +305,7 @@ namespace Garden
                         var readRect = new Rect(areaX, areaY, areaW, areaH);
                         readAreaRects[key] = readRect;
                         using Mat readMat = new Mat(frame, readRect);
-                        ocrReadings[key] = _ocrReader.Read(readMat);
+                        ocrReadings[key] = _ocrReader.Read(readMat, key);
                     }
 
                     _snapshot = new DetectionSnapshot(_snapshot.WaitingForRoi, _snapshot.WaitingRoiResult, ocrReadings, readAreaRects, _snapshot.LatestScores);
