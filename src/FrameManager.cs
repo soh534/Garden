@@ -23,6 +23,7 @@ namespace Garden
 
         private readonly string _imageSavePath;
         private readonly NetworkStream _videoStream;
+        private readonly VideoRing _videoRing;
         private readonly int _phoneWidth;
         private readonly int _phoneHeight;
         private Mat? _latestVideoFrame;
@@ -60,6 +61,8 @@ namespace Garden
             _videoStream      = gardenServer.VideoStream;
             _phoneWidth       = gardenServer.PhoneWidth;
             _phoneHeight      = gardenServer.PhoneHeight;
+            _videoRing        = new VideoRing(imageSavePath);
+            bot.PreserveVideo = tag => _videoRing.Preserve(tag);
         }
 
         private System.Net.Sockets.TcpListener? _ffmpegOutputListener;
@@ -97,9 +100,14 @@ namespace Garden
                 while (!token.IsCancellationRequested)
                 {
                     _videoStream.ReadExactly(header);
+                    // scrcpy packet header: top bits of the 8-byte PTS field
+                    // flag config (SPS/PPS) and keyframe packets
+                    bool isConfig   = (header[0] & 0x80) != 0;
+                    bool isKeyFrame = (header[0] & 0x40) != 0;
                     int packetSize = (header[8] << 24) | (header[9] << 16) | (header[10] << 8) | header[11];
                     var data = new byte[packetSize];
                     _videoStream.ReadExactly(data);
+                    _videoRing.Write(data, isConfig, isKeyFrame);
                     ffmpeg.StandardInput.BaseStream.Write(data, 0, data.Length);
                     ffmpeg.StandardInput.BaseStream.Flush();
                 }

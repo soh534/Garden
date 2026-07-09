@@ -29,6 +29,7 @@ namespace Garden.Bots
             _lua["queueActionAt"] = (Action<string, string>)((actionName, roiName) => QueueAction(actionName, roiName));
             _lua["getRoiScore"]   = (Func<string, double>)(roiName => GetRoiScore(roiName));
             _lua["roiVisible"]    = (Func<string, bool>)(name => RoiVisible(name));
+            _lua["saveVideoEvidence"] = (Func<string, string>)(tag => PreserveVideo?.Invoke(tag) ?? "");
             _lua["log"]           = (Action<string>)(msg =>
             {
                 Console.WriteLine($"{DateTime.Now:MM-dd HH:mm:ss}  [bot] {msg}");
@@ -68,6 +69,9 @@ namespace Garden.Bots
         private readonly FileSystemWatcher _watcher;
         private DateTime _lastWatcherEvent = DateTime.MinValue;
         private CancellationToken _token;
+
+        // wired by FrameManager once the VideoRing exists
+        public Func<string, string>? PreserveVideo;
 
         private class BotStoppedException : Exception { }
         private class EvalAbortedException : Exception { }
