@@ -20,6 +20,7 @@ namespace Garden
             _controlStream = controlStream;
             _phoneWidth    = phoneWidth;
             _phoneHeight   = phoneHeight;
+            _injectFailLogged = false;
 
             // Warm up the scrcpy control handler so it's ready before the first real action.
             SendTouch(TOUCH_DOWN, phoneWidth / 2, phoneHeight / 2);
@@ -37,6 +38,29 @@ namespace Garden
         public static (int x, int y) DisplayToPhone(int dx, int dy, int displayW, int displayH)
             => (dx * _phoneWidth / displayW, dy * _phoneHeight / displayH);
 
+        // A session rebuild disposes the control stream mid-flight; injections in
+        // that window are meaningless (the screen they aimed at is gone), so they
+        // are dropped, never thrown -- a throw here killed the ControlLoop task
+        // on 07-23 and hung the bot in WaitForActions.
+        private static bool _injectFailLogged;
+        private static bool TryWrite(byte[] buf, int len)
+        {
+            try
+            {
+                _controlStream!.Write(buf, 0, len);
+                return true;
+            }
+            catch (Exception e)
+            {
+                if (!_injectFailLogged)
+                {
+                    Logger.Warn($"input dropped (control stream dead, rebuild in flight): {e.Message}");
+                    _injectFailLogged = true;
+                }
+                return false;
+            }
+        }
+
         public static void SendTouch(byte action, int x, int y)
         {
             if (_controlStream == null) return;
@@ -51,7 +75,7 @@ namespace Garden
             WriteUInt16BE(buf, 22, action == TOUCH_UP ? (ushort)0 : (ushort)0xFFFF); // pressure
             WriteUInt32BE(buf, 24, 0); // action button
             WriteUInt32BE(buf, 28, 0); // buttons
-            _controlStream.Write(buf, 0, 32);
+            if (!TryWrite(buf, 32)) { return; }
             System.Threading.Interlocked.Exchange(ref LastInjectTicks, DateTime.UtcNow.Ticks);
         }
 
@@ -83,9 +107,9 @@ namespace Garden
             // WriteUInt32BE(buf, 6, 0); // repeat — already 0
             // WriteUInt32BE(buf, 10, 0); // metaState — already 0
             buf[1] = 0; // key down
-            _controlStream.Write(buf, 0, 14);
+            if (!TryWrite(buf, 14)) { return; }
             buf[1] = 1; // key up
-            _controlStream.Write(buf, 0, 14);
+            if (!TryWrite(buf, 14)) { return; }
             System.Threading.Interlocked.Exchange(ref LastInjectTicks, DateTime.UtcNow.Ticks);
         }
 

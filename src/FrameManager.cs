@@ -198,6 +198,7 @@ namespace Garden
         {
             if ((DateTime.UtcNow - _lastRebuildTry).TotalSeconds < 30) { return; }
             _lastRebuildTry = DateTime.UtcNow;
+            _sessionGen++;   // retire the old pumps NOW so their teardown EOFs don't log as new deaths
             _roiDetector.LogEvent("(engine) rebuilding capture session...");
             try { _server.Dispose(); } catch { }
             try { if (_ffmpeg != null && !_ffmpeg.HasExited) { _ffmpeg.Kill(); } _ffmpeg?.Dispose(); } catch { }
@@ -368,7 +369,10 @@ namespace Garden
         {
             while (!token.IsCancellationRequested)
             {
-                _actionPlayer.StepAction(DateTime.Now);
+                // the action pump must survive anything: if it dies, IsIdle
+                // freezes and the Lua thread hangs forever in WaitForActions
+                try { _actionPlayer.StepAction(DateTime.Now); }
+                catch (Exception e) { Logger.Error($"StepAction error: {e.Message}"); }
                 Thread.Sleep(10);
             }
         }
