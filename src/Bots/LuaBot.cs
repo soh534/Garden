@@ -30,6 +30,7 @@ namespace Garden.Bots
             _lua["getRoiScore"]   = (Func<string, double>)(roiName => GetRoiScore(roiName));
             _lua["roiVisible"]    = (Func<string, bool>)(name => RoiVisible(name));
             _lua["saveVideoEvidence"] = (Func<string, string>)(tag => PreserveVideo?.Invoke(tag) ?? "");
+            _lua["pressHome"]     = (Action)(InputManager.Home);
             _lua["log"]           = (Action<string>)(msg =>
             {
                 Console.WriteLine($"{DateTime.Now:MM-dd HH:mm:ss}  [bot] {msg}");

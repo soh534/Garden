@@ -65,6 +65,8 @@ namespace Garden
             RunAdb($"push \"{serverPath}\" /data/local/tmp/scrcpy-server.jar");
 
             string scidHex = GardenServerScid.ToString("x8");
+            RunAdb("shell pkill -f scid=1");    // sweep a wedged predecessor: it lingers half-dead holding the socket name
+            Thread.Sleep(500);
             RunAdb($"forward tcp:{GardenServerPort} localabstract:scrcpy_{scidHex}");
 
             string serverArgs = $"shell CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / " +
@@ -76,26 +78,42 @@ namespace Garden
                 UseShellExecute = false, CreateNoWindow = true
             });
 
-            Thread.Sleep(500);
+            // The server takes a variable moment to start listening; the old fixed
+            // 500ms sleep raced it ("Garden server rejected connection" = handshake
+            // read EOF). Retry the whole handshake instead.
+            for (int attempt = 1; attempt <= 5; attempt++)
+            {
+                Thread.Sleep(1000);
+                TcpClient? videoClient = null, controlClient = null;
+                try
+                {
+                    videoClient = new TcpClient("127.0.0.1", GardenServerPort) { NoDelay = true, ReceiveTimeout = 3000 };
+                    var videoStream = videoClient.GetStream();
+                    controlClient = new TcpClient("127.0.0.1", GardenServerPort) { NoDelay = true };
+                    var controlStream = controlClient.GetStream();
 
-            var videoClient = new TcpClient("127.0.0.1", GardenServerPort) { NoDelay = true };
-            var videoStream = videoClient.GetStream();
+                    int dummy = videoStream.ReadByte();
+                    if (dummy != 0) { throw new IOException("no dummy byte (server not listening yet)"); }
 
-            var controlClient = new TcpClient("127.0.0.1", GardenServerPort) { NoDelay = true };
-            var controlStream = controlClient.GetStream();
-
-            int dummy = videoStream.ReadByte();
-            if (dummy != 0) { Logger.Error("Garden server rejected connection"); return null; }
-
-            byte[] nameBuf   = new byte[64]; videoStream.ReadExactly(nameBuf);
-            byte[] codecBuf  = new byte[4];  videoStream.ReadExactly(codecBuf);
-            byte[] widthBuf  = new byte[4];  videoStream.ReadExactly(widthBuf);
-            byte[] heightBuf = new byte[4];  videoStream.ReadExactly(heightBuf);
-            int phoneWidth  = (widthBuf[0]  << 24) | (widthBuf[1]  << 16) | (widthBuf[2]  << 8) | widthBuf[3];
-            int phoneHeight = (heightBuf[0] << 24) | (heightBuf[1] << 16) | (heightBuf[2] << 8) | heightBuf[3];
-            Logger.Info($"Phone: {phoneWidth}x{phoneHeight}");
-
-            return new GardenServer(videoClient, controlClient, videoStream, controlStream, phoneWidth, phoneHeight);
+                    byte[] nameBuf   = new byte[64]; videoStream.ReadExactly(nameBuf);
+                    byte[] codecBuf  = new byte[4];  videoStream.ReadExactly(codecBuf);
+                    byte[] widthBuf  = new byte[4];  videoStream.ReadExactly(widthBuf);
+                    byte[] heightBuf = new byte[4];  videoStream.ReadExactly(heightBuf);
+                    int phoneWidth  = (widthBuf[0]  << 24) | (widthBuf[1]  << 16) | (widthBuf[2]  << 8) | widthBuf[3];
+                    int phoneHeight = (heightBuf[0] << 24) | (heightBuf[1] << 16) | (heightBuf[2] << 8) | heightBuf[3];
+                    videoClient.ReceiveTimeout = 0;   // handshake done: video reads may legitimately idle for minutes on a static screen
+                    Logger.Info($"Phone: {phoneWidth}x{phoneHeight} (handshake attempt {attempt})");
+                    return new GardenServer(videoClient, controlClient, videoStream, controlStream, phoneWidth, phoneHeight);
+                }
+                catch (Exception e)
+                {
+                    videoClient?.Dispose();
+                    controlClient?.Dispose();
+                    Logger.Info($"Garden server handshake attempt {attempt}/5: {e.Message}");
+                }
+            }
+            Logger.Error("Garden server: handshake failed after 5 attempts");
+            return null;
         }
 
         internal static void RemoveAdbForward()

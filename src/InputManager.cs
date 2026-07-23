@@ -52,6 +52,7 @@ namespace Garden
             WriteUInt32BE(buf, 24, 0); // action button
             WriteUInt32BE(buf, 28, 0); // buttons
             _controlStream.Write(buf, 0, 32);
+            System.Threading.Interlocked.Exchange(ref LastInjectTicks, DateTime.UtcNow.Ticks);
         }
 
         private static void WriteUInt64BE(byte[] b, int o, ulong v) { WriteUInt32BE(b, o, (uint)(v >> 32)); WriteUInt32BE(b, o + 4, (uint)v); }
@@ -62,6 +63,16 @@ namespace Garden
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
         public const int AKEYCODE_BACK = 4;
+        public const int AKEYCODE_HOME = 3;
+
+        // HOME is idempotent from EVERY state (drawer -> home, recents -> home,
+        // home -> no-op) -- unlike a home GESTURE, which on an already-home
+        // screen is the drawer-opening swipe. killApp ends with this.
+        public static void Home() => SendKey(AKEYCODE_HOME);
+
+        // stamped on every injected touch/key: the frame-stall watchdog checks
+        // "input sent but no frame followed"
+        public static long LastInjectTicks;
 
         public static void SendKey(int keycode)
         {
@@ -75,6 +86,7 @@ namespace Garden
             _controlStream.Write(buf, 0, 14);
             buf[1] = 1; // key up
             _controlStream.Write(buf, 0, 14);
+            System.Threading.Interlocked.Exchange(ref LastInjectTicks, DateTime.UtcNow.Ticks);
         }
 
         // Simulates a left mouse button click at the current cursor position

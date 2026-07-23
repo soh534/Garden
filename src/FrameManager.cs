@@ -22,12 +22,28 @@ namespace Garden
         private readonly WindowPositionManager _windowPosManager;
 
         private readonly string _imageSavePath;
-        private readonly NetworkStream _videoStream;
+        private NetworkStream _videoStream;                // per-session: swapped by RebuildSession
         private readonly VideoRing _videoRing;
         private readonly int _phoneWidth;
         private readonly int _phoneHeight;
         private Mat? _latestVideoFrame;
         private readonly object _videoFrameLock = new();
+
+        // --- capture-session self-heal ---------------------------------------
+        // The phone-side scrcpy server dies after long uptimes (~35h observed:
+        // encoder gives out, video socket EOFs, the process lingers half-dead).
+        // The pump threads flag the death the INSTANT they see it (the catch
+        // block IS the event); the render loop then tears down and rebuilds the
+        // whole session: sweep the dead server, re-handshake, fresh ffmpeg.
+        // A frame-age check backstops silent stalls: input sent but no frame
+        // followed for 30s. Five manual rescues (07-08 .. 07-23) preceded this.
+        private readonly ScrcpyManager _scrcpy;
+        private ScrcpyManager.GardenServer _server;
+        private Process? _ffmpeg;
+        private int _sessionGen;
+        private volatile bool _streamDead;
+        private long _lastFrameTicks;
+        private DateTime _lastRebuildTry = DateTime.MinValue;
 
         private const int TARGET_FRAME_TIME_MS = 33;
 
@@ -49,7 +65,7 @@ namespace Garden
         public void SetScanEnabled(bool on) => _roiDetector.SetScanEnabled(on);
         public bool ScanEnabled => _roiDetector.ScanEnabled;
 
-        public FrameManager(string imageSavePath, LuaBot bot, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, RoiRecorder roiRecorder, RoiDetector roiDetector, WindowPositionManager windowPosManager, ScrcpyManager.GardenServer gardenServer)
+        public FrameManager(string imageSavePath, LuaBot bot, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, RoiRecorder roiRecorder, RoiDetector roiDetector, WindowPositionManager windowPosManager, ScrcpyManager scrcpyManager, ScrcpyManager.GardenServer gardenServer)
         {
             _imageSavePath    = imageSavePath;
             _bot              = bot;
@@ -58,6 +74,8 @@ namespace Garden
             _roiRecorder      = roiRecorder;
             _roiDetector      = roiDetector;
             _windowPosManager = windowPosManager;
+            _scrcpy           = scrcpyManager;
+            _server           = gardenServer;
             _videoStream      = gardenServer.VideoStream;
             _phoneWidth       = gardenServer.PhoneWidth;
             _phoneHeight      = gardenServer.PhoneHeight;
@@ -92,30 +110,39 @@ namespace Garden
             return proc;
         }
 
-        private void VideoStreamLoop(Process ffmpeg, CancellationToken token)
+        private void VideoStreamLoop(Process ffmpeg, int gen, CancellationToken token)
         {
             var header = new byte[12];
+            var stream = _videoStream;                     // THIS session's stream: a rebuild swaps the field, not our capture
             try
             {
                 while (!token.IsCancellationRequested)
                 {
-                    _videoStream.ReadExactly(header);
+                    stream.ReadExactly(header);
                     // scrcpy packet header: top bits of the 8-byte PTS field
                     // flag config (SPS/PPS) and keyframe packets
                     bool isConfig   = (header[0] & 0x80) != 0;
                     bool isKeyFrame = (header[0] & 0x40) != 0;
                     int packetSize = (header[8] << 24) | (header[9] << 16) | (header[10] << 8) | header[11];
                     var data = new byte[packetSize];
-                    _videoStream.ReadExactly(data);
+                    stream.ReadExactly(data);
                     _videoRing.Write(data, isConfig, isKeyFrame);
                     ffmpeg.StandardInput.BaseStream.Write(data, 0, data.Length);
                     ffmpeg.StandardInput.BaseStream.Flush();
                 }
             }
-            catch (Exception e) { if (!token.IsCancellationRequested) { Logger.Error($"VideoStreamLoop error: {e.Message}"); } }
+            catch (Exception e)
+            {
+                if (!token.IsCancellationRequested && gen == _sessionGen)
+                {
+                    Logger.Error($"VideoStreamLoop error: {e.Message}");
+                    _roiDetector.LogEvent($"(engine) VIDEO STREAM DIED: {e.Message} -- rebuilding session");
+                    _streamDead = true;
+                }
+            }
         }
 
-        private void VideoDecodeLoop(Process ffmpeg, CancellationToken token)
+        private void VideoDecodeLoop(Process ffmpeg, int gen, CancellationToken token)
         {
             int frameSize = _phoneWidth * _phoneHeight * 3;
             var buf = new byte[frameSize];
@@ -132,9 +159,66 @@ namespace Garden
                         _latestVideoFrame?.Dispose();
                         _latestVideoFrame = mat;
                     }
+                    Interlocked.Exchange(ref _lastFrameTicks, DateTime.UtcNow.Ticks);
                 }
             }
-            catch (Exception e) { if (!token.IsCancellationRequested) { Console.WriteLine($"[Garden] VideoDecodeLoop error: {e.Message}"); } }
+            catch (Exception e)
+            {
+                if (!token.IsCancellationRequested && gen == _sessionGen)
+                {
+                    Console.WriteLine($"[Garden] VideoDecodeLoop error: {e.Message}");
+                    _roiDetector.LogEvent($"(engine) VIDEO DECODE DIED: {e.Message} -- rebuilding session");
+                    _streamDead = true;
+                }
+            }
+        }
+
+        // start (or restart) the decode pipeline for the CURRENT _videoStream
+        private bool StartSession(CancellationToken token)
+        {
+            int gen = ++_sessionGen;
+            var ffmpeg = StartVideoDecoder(_phoneWidth, _phoneHeight);
+            _ffmpeg = ffmpeg;
+            Task.Run(() => VideoStreamLoop(ffmpeg, gen, token));
+            for (int i = 0; i < 100 && !_ffmpegOutputListener!.Pending(); i++) { Thread.Sleep(100); }   // ffmpeg connects back within ~10s or the session is dead
+            if (!_ffmpegOutputListener!.Pending())
+            {
+                Logger.Error("ffmpeg never connected its output socket");
+                return false;
+            }
+            _ffmpegOutputClient = _ffmpegOutputListener.AcceptTcpClient();
+            _ffmpegOutputListener.Stop();
+            Console.WriteLine("[Garden] ffmpeg TCP output connected");
+            Task.Run(() => VideoDecodeLoop(ffmpeg, gen, token));
+            return true;
+        }
+
+        // full capture-session teardown + rebuild; paced to one attempt per 30s
+        private void RebuildSession(CancellationToken token)
+        {
+            if ((DateTime.UtcNow - _lastRebuildTry).TotalSeconds < 30) { return; }
+            _lastRebuildTry = DateTime.UtcNow;
+            _roiDetector.LogEvent("(engine) rebuilding capture session...");
+            try { _server.Dispose(); } catch { }
+            try { if (_ffmpeg != null && !_ffmpeg.HasExited) { _ffmpeg.Kill(); } _ffmpeg?.Dispose(); } catch { }
+            try { _ffmpegOutputClient?.Dispose(); } catch { }
+            var server = _scrcpy.StartGardenServer();      // sweeps the dead phone-side server + retried handshake
+            if (server == null)
+            {
+                _roiDetector.LogEvent("(engine) capture session rebuild FAILED (handshake) -- retrying in 30s");
+                return;
+            }
+            _server = server;
+            _videoStream = server.VideoStream;
+            InputManager.Initialize(server.ControlStream, server.PhoneWidth, server.PhoneHeight);
+            if (!StartSession(token))
+            {
+                _roiDetector.LogEvent("(engine) capture session rebuild FAILED (ffmpeg) -- retrying in 30s");
+                return;
+            }
+            _streamDead = false;
+            Interlocked.Exchange(ref _lastFrameTicks, DateTime.UtcNow.Ticks);
+            _roiDetector.LogEvent("(engine) capture session REBUILT -- stream restored");
         }
 
         public Mat CaptureWindow(IntPtr hWnd)
@@ -164,13 +248,12 @@ namespace Garden
             int displayW = scrcpyRect.Right  > 0 ? scrcpyRect.Right  : _phoneWidth  / 2;
             int displayH = scrcpyRect.Bottom > 0 ? scrcpyRect.Bottom : _phoneHeight / 2;
 
-            var ffmpeg = StartVideoDecoder(_phoneWidth, _phoneHeight);
-            Task.Run(() => VideoStreamLoop(ffmpeg, token));
-            Console.WriteLine("[Garden] waiting for ffmpeg TCP output connection...");
-            _ffmpegOutputClient = _ffmpegOutputListener!.AcceptTcpClient();
-            _ffmpegOutputListener.Stop();
-            Console.WriteLine("[Garden] ffmpeg TCP output connected");
-            Task.Run(() => VideoDecodeLoop(ffmpeg, token));
+            Console.WriteLine("[Garden] starting capture session...");
+            if (!StartSession(token))
+            {
+                Logger.Error("initial capture session failed");
+                return;
+            }
 
             Mat? firstVideoFrame = null;
             while (firstVideoFrame == null)
@@ -198,6 +281,22 @@ namespace Garden
 
                 try
                 {
+                    if (_streamDead) { RebuildSession(token); }
+                    else
+                    {
+                        // silent-stall backstop: we injected input but no frame followed --
+                        // a live screen always changes under a tap/swipe, so this means the
+                        // stream died without an EOF. Static idle screens can't false-trigger
+                        // (no input, no expectation).
+                        long lf = Interlocked.Read(ref _lastFrameTicks), li = Interlocked.Read(ref InputManager.LastInjectTicks);
+                        if (lf > 0 && li > lf
+                            && DateTime.UtcNow.Ticks - li > TimeSpan.FromSeconds(15).Ticks
+                            && DateTime.UtcNow.Ticks - lf > TimeSpan.FromSeconds(30).Ticks)
+                        {
+                            _roiDetector.LogEvent("(engine) VIDEO STALLED (input sent, no frame followed) -- rebuilding session");
+                            _streamDead = true;
+                        }
+                    }
                     _sw.Restart();
                     Mat? phoneFrame = null;
                     lock (_videoFrameLock) { phoneFrame = _latestVideoFrame?.Clone(); }
@@ -259,8 +358,7 @@ namespace Garden
             }
 
             Task.WaitAll(botTask, controlTask);
-            if (!ffmpeg.HasExited) { ffmpeg.Kill(); }
-            ffmpeg.Dispose();
+            try { if (_ffmpeg != null && !_ffmpeg.HasExited) { _ffmpeg.Kill(); } _ffmpeg?.Dispose(); } catch { }
             _ffmpegOutputClient?.Dispose();
             lock (_videoFrameLock) { _latestVideoFrame?.Dispose(); }
             Cv2.DestroyAllWindows();

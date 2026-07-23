@@ -90,7 +90,7 @@ namespace Garden
             RoiDetector roiDetector = new(roiSavePath, imageSavePath, configManager.OcrLang);
 
             LuaBot bot = new(luaScriptPath, roiDetector, actionPlayer);
-            FrameManager ssManager = new(imageSavePath, bot, mouseRecorder, actionPlayer, roiRecorder, roiDetector, windowPosManager, gardenServer);
+            FrameManager ssManager = new(imageSavePath, bot, mouseRecorder, actionPlayer, roiRecorder, roiDetector, windowPosManager, scrcpyManager, gardenServer);
 
 
             var processingTask = Task.Run(() => ssManager.ProcessFrames(cts, proc, commandQueue, actionQueue), cts.Token);

@@ -12,8 +12,8 @@ namespace Garden
     internal class VideoRing
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-        private const long MinSegmentBytes = 8 * 1024 * 1024;
-        private const int MaxSegments = 12;
+        private const long MinSegmentBytes = 24 * 1024 * 1024;   // ~30-45s per segment on a busy screen
+        private const int MaxSegments = 20;                       // ~10-15 min of active history (was 12x8MB ~= 2 min: too short to review)
         private const int MaxSaved = 5;
 
         private readonly string _dir;
