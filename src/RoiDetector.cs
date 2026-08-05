@@ -18,6 +18,10 @@ namespace Garden
             public int? clickOffsetY { get; set; }
             public List<ReadArea> readAreas { get; set; } = new();
             public bool fixedLocation { get; set; } = false;
+            // per-ROI override for animated/decorated icons whose present-score
+            // wobbles above the global threshold (gardenlisticon: present =
+            // 0.0007-0.0103, absent >= 0.20). null = global TemplateThreshold.
+            public double? threshold { get; set; }
 
             public class ReadArea
             {
@@ -260,7 +264,7 @@ namespace Garden
                     Score = score
                 };
 
-                return score < TemplateThreshold;
+                return score < (roiData.threshold ?? TemplateThreshold);
             }
         }
 
@@ -485,7 +489,7 @@ namespace Garden
                         try
                         {
                             DetectRoi(frame, matClone, roiData, out double score, out int minLocX, out int minLocY, out int centerX, out int centerY);
-                            bool detected = score < TemplateThreshold;
+                            bool detected = score < (roiData.threshold ?? TemplateThreshold);
                             int clickX = roiData.clickOffsetX.HasValue ? minLocX + roiData.clickOffsetX.Value : centerX;
                             int clickY = roiData.clickOffsetY.HasValue ? minLocY + roiData.clickOffsetY.Value : centerY;
                             var readings = new Dictionary<string, string>();
