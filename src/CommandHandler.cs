@@ -120,6 +120,16 @@ namespace Garden
                             if (parts.Length < 3) { Console.WriteLine("Usage: roi box <name>"); break; }
                             _roiRecorder.EditBox(parts[2]);
                             break;
+                        case "threshold":
+                            if (parts.Length < 4) { Console.WriteLine("Usage: roi threshold <name> <value|off>"); break; }
+                            if (parts[3].ToLowerInvariant() == "off") { _roiRecorder.SetThreshold(parts[2], null); }
+                            else if (double.TryParse(parts[3], out double tv) && tv > 0) { _roiRecorder.SetThreshold(parts[2], tv); }
+                            else { Console.WriteLine("Usage: roi threshold <name> <value|off>"); }
+                            break;
+                        case "tune":
+                            if (parts.Length < 3) { Console.WriteLine("Usage: roi tune <name>  (with the ROI on screen)"); break; }
+                            _frameManager.TuneRoi(parts[2]);
+                            break;
                         case "readarea":
                             if (parts.Length < 4) { Console.WriteLine("Usage: roi readarea <name> add | roi readarea <name> remove <area>"); break; }
                             if (parts[3].ToLowerInvariant() == "add") { _roiRecorder.AddReadArea(parts[2]); }
@@ -189,6 +199,8 @@ namespace Garden
             Console.WriteLine("  roi fixed <name>            - Toggle an ROI's fixedLocation flag");
             Console.WriteLine("  roi clickpoint <name>       - Re-set the clickpoint (then click the target)");
             Console.WriteLine("  roi box <name>              - Re-draw the box (then drag); re-crops, keeps clickpoint/read areas");
+            Console.WriteLine("  roi threshold <name> <v|off> - Per-ROI detection threshold override");
+            Console.WriteLine("  roi tune <name>             - Auto-set threshold from live samples (ROI must be on screen)");
             Console.WriteLine("  roi readarea <name> add     - Add a read area (then drag + name it)");
             Console.WriteLine("  roi readarea <name> remove <area> - Remove a read area");
             Console.WriteLine("  bot start                   - Start the bot automation");

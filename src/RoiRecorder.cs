@@ -17,6 +17,7 @@ namespace Garden
             public int? clickOffsetY { get; set; } = null;
             public List<ReadArea> readAreas { get; set; } = new();
             public bool fixedLocation { get; set; } = false;
+            public double? threshold { get; set; }   // mirrors RoiDetector.RoiData: must round-trip through edits
 
             public class ReadArea
             {
@@ -481,6 +482,16 @@ namespace Garden
             roi.fixedLocation = !roi.fixedLocation;
             SaveRois(saved);
             Console.WriteLine($"'{roiName}' fixedLocation = {roi.fixedLocation}");
+        }
+
+        public void SetThreshold(string roiName, double? value)
+        {
+            if (!LoadRoi(roiName, out var saved, out var roi)) { return; }
+            roi.threshold = value;
+            SaveRois(saved);
+            Console.WriteLine(value.HasValue
+                ? $"'{roiName}' threshold = {value.Value:F4}"
+                : $"'{roiName}' threshold cleared (global {RoiDetector.TemplateThreshold})");
         }
 
         public void RemoveReadArea(string roiName, string areaName)

@@ -222,6 +222,37 @@ namespace Garden
             _roiDetector.LogEvent("(engine) capture session REBUILT -- stream restored");
         }
 
+        // Sample an on-screen ROI's score for ~3s (sweeps animation phases), then
+        // set its per-ROI threshold to 3x the worst present-score, capped at 0.05
+        // (absent-cluster starts ~0.20) and floored at the global default.
+        public void TuneRoi(string name)
+        {
+            Task.Run(() =>
+            {
+                var scores = new List<double>();
+                for (int i = 0; i < 30; i++)
+                {
+                    _roiDetector.TryFindRoi(name, out var info);
+                    if (info.RoiName == null)
+                    {
+                        Console.WriteLine($"roi tune: '{name}' not found");
+                        return;
+                    }
+                    scores.Add(info.Score);
+                    Thread.Sleep(100);
+                }
+                double worst = scores.Max();
+                if (worst > 0.15)
+                {
+                    Console.WriteLine($"roi tune: '{name}' does not look on-screen (worst sample {worst:F4}) -- put it on screen and re-run");
+                    return;
+                }
+                double t = Math.Max(Math.Min(worst * 3, 0.05), RoiDetector.TemplateThreshold);
+                Console.WriteLine($"roi tune: sampled {scores.Count} frames, score {scores.Min():F4}-{worst:F4}");
+                _roiRecorder.SetThreshold(name, t);
+            });
+        }
+
         public Mat CaptureWindow(IntPtr hWnd)
         {
             Win32Api.GetClientRect(hWnd, out Win32Api.RECT clientRect);
