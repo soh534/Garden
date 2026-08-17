@@ -151,6 +151,7 @@ namespace Garden
         private readonly object _detLogLock = new();
         private string? _detLogLastKey;
         private int _detLogRepeat;
+        private bool _detLogRotateFailed;      // warn once per failure streak (guarded by _detLogLock)
         private const long DetLogMaxBytes = 8 * 1024 * 1024;
 
         private string DetLogDir
@@ -209,7 +210,30 @@ namespace Garden
                 var fi = new FileInfo(path);
                 if (fi.Exists && fi.Length > DetLogMaxBytes)
                 {
-                    File.Move(path, Path.Combine(DetLogDir, "roi_detections.old"), true);
+                    // Rotation gets its OWN try: a failed move must never stop the
+                    // append. Sharing one try turned a TRANSIENT lock into PERMANENT
+                    // silent death -- the file stays over the cap, so every later
+                    // append retries the same doomed move and never recovers.
+                    // Observed 08-17 21:07: a leftover `tail -f` had followed the log
+                    // through an earlier rotation and pinned .old, so File.Move could
+                    // not overwrite it. The recorder went dark for 28 minutes while
+                    // the bot completed four account visits, none of them logged.
+                    // Plenty of things hold these files briefly -- OneDrive sync, AV,
+                    // an editor, a human tailing the log -- so this path must degrade
+                    // to "the log grows past its cap", never to "logging stops".
+                    try
+                    {
+                        File.Move(path, Path.Combine(DetLogDir, "roi_detections.old"), true);
+                        _detLogRotateFailed = false;
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!_detLogRotateFailed)
+                        {
+                            _detLogRotateFailed = true;
+                            Logger.Warn($"flight recorder rotation blocked ({ex.Message}) -- still appending; the log will exceed its {DetLogMaxBytes / (1024 * 1024)}MB cap until the lock clears");
+                        }
+                    }
                 }
                 File.AppendAllText(path, line + Environment.NewLine);
             }
