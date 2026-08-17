@@ -139,12 +139,19 @@ namespace Garden
         // Every TryFindRoi result is appended to roi_detections.log so the
         // tail always shows the bot's recent perception. Consecutive repeats
         // of the same (roi, outcome) collapse into a "repeated xN" line so
-        // poll loops don't flush real history. Rotated at 10KB into
-        // roi_detections.old -- total disk is bounded, logging never stops.
+        // poll loops don't flush real history. Rotated into roi_detections.old
+        // -- total disk is bounded, logging never stops.
+        //
+        // Sized for ~5 weeks at the observed ~20KB/h. The old 64KB cap held only
+        // ~6h, which repeatedly rotated away the ONSET of a failure before anyone
+        // could read it: on 08-17 the start of the gardenlisticon outage was
+        // already gone by the time we looked, and a chronic login-OCR flake was
+        // invisible in the window entirely. 16MB of text against the video ring's
+        // 480MB is the right balance -- the text log IS the decision trail.
         private readonly object _detLogLock = new();
         private string? _detLogLastKey;
         private int _detLogRepeat;
-        private const long DetLogMaxBytes = 64 * 1024;
+        private const long DetLogMaxBytes = 8 * 1024 * 1024;
 
         private string DetLogDir
         {
