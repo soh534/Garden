@@ -103,6 +103,12 @@ namespace Garden
             new Thread(ScanLoop) { IsBackground = true, Name = "RoiDetector.Scan" }.Start();
         }
 
+        // signaled once per REAL frame delivered by the render loop (which is
+        // itself gated on decoded-frame arrival): the scan loop BLOCKS on this
+        // instead of polling -- identical pixels yield identical scores, so a
+        // static screen must cost the scanner nothing
+        private readonly AutoResetEvent _frameArrived = new(false);
+
         public void SetFrame(Mat frame)
         {
             lock (_frameLock)
@@ -110,6 +116,7 @@ namespace Garden
                 _latestFrame?.Dispose();
                 _latestFrame = frame.Clone();
             }
+            _frameArrived.Set();
         }
 
         public bool TryFindRoi(string name, out DetectedRoiInfo info)
@@ -498,9 +505,14 @@ namespace Garden
             while (!_cts.IsCancellationRequested)
             {
                 if (!_scanEnabled) { Thread.Sleep(100); continue; }
+                // block until a new frame actually arrives (timeout only so the
+                // loop can notice scan-off / shutdown); a signal that fired while
+                // we were mid-sweep stays latched, so the newest frame is never
+                // missed -- and a static screen costs zero sweeps
+                if (!_frameArrived.WaitOne(500)) { continue; }
                 Mat? frame;
                 lock (_frameLock) { frame = _latestFrame?.Clone(); }
-                if (frame == null) { Thread.Sleep(100); continue; }
+                if (frame == null) { continue; }
                 try
                 {
                     List<string> names;
@@ -553,6 +565,7 @@ namespace Garden
         public void Dispose()
         {
             _cts.Cancel();
+            _frameArrived.Set();     // release a scan loop blocked on the wait
             _fileWatcher.Dispose();
             _ocrReader.Dispose();
             lock (_frameLock) { _latestFrame?.Dispose(); }

@@ -43,6 +43,7 @@ namespace Garden
         private int _sessionGen;
         private volatile bool _streamDead;
         private long _lastFrameTicks;
+        private long _frameSeq;                 // bumps once per REAL decoded frame; render/scan gate on it
         private DateTime _lastRebuildTry = DateTime.MinValue;
 
         private const int TARGET_FRAME_TIME_MS = 33;
@@ -160,6 +161,7 @@ namespace Garden
                         _latestVideoFrame = mat;
                     }
                     Interlocked.Exchange(ref _lastFrameTicks, DateTime.UtcNow.Ticks);
+                    Interlocked.Increment(ref _frameSeq);
                 }
             }
             catch (Exception e)
@@ -307,6 +309,7 @@ namespace Garden
             Task botTask = Task.Run(() => _bot.Run(token));
             Task controlTask = Task.Run(() => ControlLoop(token));
 
+            long lastDrawnSeq = -1;
             while (!token.IsCancellationRequested && !proc.HasExited)
             {
                 var frameStartTime = DateTime.Now;
@@ -329,6 +332,47 @@ namespace Garden
                             _streamDead = true;
                         }
                     }
+                    // Console commands are their own event stream: handle them every
+                    // tick, frames or not (the frame argument is cloned on demand --
+                    // commands are rare, frames may be absent on a static screen).
+                    if (commandQueue.TryDequeue(out var command))
+                    {
+                        if (_roiRecorder.IsPrompting)
+                        {
+                            _roiRecorder.FeedInput(command);
+                        }
+                        else
+                        {
+                            Mat? cmdFrame = null;
+                            lock (_videoFrameLock) { cmdFrame = _latestVideoFrame?.Clone(); }
+                            using (cmdFrame)
+                            {
+                                if (cmdFrame != null && !commandHandler.Handle(command, cmdFrame))
+                                {
+                                    cts.Cancel();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // Frame gate: the phone-side encoder is already event-driven (a
+                    // static screen sends NOTHING), so a new decoded frame is the only
+                    // event that makes the pipeline below worth running. Without the
+                    // gate this loop did four full-frame clones + resize + redraw of
+                    // IDENTICAL pixels at 30Hz -- measured 1.4 cores while the bot
+                    // idled. Time-based duties (watchdog above, console above, UI pump
+                    // below) stay outside the gate and keep their 30Hz heartbeat.
+                    long seq = Interlocked.Read(ref _frameSeq);
+                    if (seq == lastDrawnSeq)
+                    {
+                        Cv2.WaitKey(1);
+                        var idleElapsed = (DateTime.Now - frameStartTime).TotalMilliseconds;
+                        Thread.Sleep(Math.Max(0, TARGET_FRAME_TIME_MS - (int)idleElapsed));
+                        continue;
+                    }
+                    lastDrawnSeq = seq;
+
                     _sw.Restart();
                     Mat? phoneFrame = null;
                     lock (_videoFrameLock) { phoneFrame = _latestVideoFrame?.Clone(); }
@@ -342,19 +386,6 @@ namespace Garden
                     {
                         _sharedFrame?.Dispose();
                         _sharedFrame = phoneFrame.Clone();
-                    }
-
-                    if (commandQueue.TryDequeue(out var command))
-                    {
-                        if (_roiRecorder.IsPrompting)
-                        {
-                            _roiRecorder.FeedInput(command);
-                        }
-                        else
-                        {
-                            bool shouldContinue = commandHandler.Handle(command, phoneFrame);
-                            if (!shouldContinue) { cts.Cancel(); break; }
-                        }
                     }
 
                     var snapshot = _roiDetector.Snapshot;
