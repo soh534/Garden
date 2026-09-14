@@ -13,8 +13,9 @@ namespace Garden
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private const long MinSegmentBytes = 24 * 1024 * 1024;   // ~30-45s per segment on a busy screen
-        private const int MaxSegments = 20;                       // ~10-15 min of active history (was 12x8MB ~= 2 min: too short to review)
-        private const int MaxSaved = 5;
+        private const int MaxSegments = 185;                      // ~5GB at ~27MB/segment: ~3h of ACTIVE work, far more calendar time (idle barely rotates)
+        private const int MaxSavedDays = 30;                      // revisit a bug for a month
+        private const int MaxSavedDirs = 100;                     // storm backstop: a recovery loop preserves every ~16 min
 
         private readonly string _dir;
         private readonly object _lock = new();
@@ -27,6 +28,39 @@ namespace Garden
         {
             _dir = Path.Combine(baseDir, "video_ring");
             Directory.CreateDirectory(_dir);
+            // Retention is derived from the DIRECTORY, not from this process's
+            // memory. The queue used to start empty on every launch, so the ring
+            // could only delete segments IT had created -- each restart orphaned
+            // its predecessor's MaxSegments files permanently. Measured 09-14:
+            // 339 files / 8.8GB from ~17 runs since 07-10, the per-day counts
+            // landing on exactly 20 (= the cap) run after run.
+            // Ordered by write time, not name: segment names carry no year and
+            // would misorder across a year boundary.
+            try
+            {
+                foreach (string f in new DirectoryInfo(_dir).GetFiles("*.h264")
+                                                            .OrderBy(fi => fi.LastWriteTimeUtc)
+                                                            .Select(fi => fi.FullName))
+                {
+                    _segments.Enqueue(f);
+                }
+                int adopted = _segments.Count;
+                int pruned = PruneSegments();
+                if (adopted > 0) { Logger.Info($"video ring: adopted {adopted} segments from disk, pruned {pruned}"); }
+            }
+            catch (Exception ex) { Logger.Warn($"video ring: could not adopt existing segments: {ex.Message}"); }
+        }
+
+        // delete oldest segments beyond the cap; returns how many went
+        private int PruneSegments()
+        {
+            int n = 0;
+            while (_segments.Count > MaxSegments)
+            {
+                string old = _segments.Dequeue();
+                try { File.Delete(old); n++; } catch { }
+            }
+            return n;
         }
 
         // called from VideoStreamLoop for every packet; must never throw
@@ -63,11 +97,7 @@ namespace Garden
             _segment = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
             if (_configPacket != null) { _segment.Write(_configPacket, 0, _configPacket.Length); }
             _segments.Enqueue(path);
-            while (_segments.Count > MaxSegments)
-            {
-                string old = _segments.Dequeue();
-                try { File.Delete(old); } catch { }
-            }
+            PruneSegments();
         }
 
         // copy the newest segments aside so the ring can't overwrite evidence;
@@ -91,11 +121,16 @@ namespace Garden
                         File.Copy(f, raw, true);
                         copied.Add(raw);
                     }
-                    // bound the archive: drop oldest saved dirs beyond MaxSaved
-                    var dirs = Directory.GetDirectories(savedRoot).OrderBy(d => d).ToList();
-                    while (dirs.Count > MaxSaved)
+                    // bound the archive by AGE so old bugs stay visitable, with a
+                    // count backstop so a failure storm cannot fill the disk.
+                    // By write time, not name (names carry no year).
+                    var dirs = new DirectoryInfo(savedRoot).GetDirectories()
+                                                           .OrderBy(di => di.LastWriteTimeUtc)
+                                                           .ToList();
+                    var cutoff = DateTime.UtcNow.AddDays(-MaxSavedDays);
+                    while (dirs.Count > 0 && (dirs[0].LastWriteTimeUtc < cutoff || dirs.Count > MaxSavedDirs))
                     {
-                        try { Directory.Delete(dirs[0], true); } catch { }
+                        try { dirs[0].Delete(true); } catch { }
                         dirs.RemoveAt(0);
                     }
                 }
