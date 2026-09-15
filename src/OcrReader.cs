@@ -62,22 +62,17 @@ namespace Garden
                 Cv2.CvtColor(upscaled, gray, ColorConversionCodes.BGR2GRAY);
                 using Mat thresholded = new Mat();
                 Cv2.Threshold(gray, thresholded, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
-                // Tesseract is trained on dark text over a light page with a margin
-                // around it. Game badges are the opposite -- light digits on a coloured
-                // disc, cropped tight -- and that is exactly what broke the eng read of
-                // '13' ('EES', 'Rk', 09-15): white-on-black, glyphs touching the edge,
-                // the disc rim leaking in as a blob beside the thin '1'. Normalise here,
-                // once, for every read: a mostly-dark page is inverted, then padded
-                // with a white margin. Dark-on-light reads (the deadline) pass through
-                // unchanged apart from the margin.
-                if (Cv2.CountNonZero(thresholded) < thresholded.Rows * thresholded.Cols / 2)
-                {
-                    Cv2.BitwiseNot(thresholded, thresholded);
-                }
-                using Mat padded = new Mat();
-                Cv2.CopyMakeBorder(thresholded, padded, 20, 20, 20, 20, BorderTypes.Constant, Scalar.White);
+                // Deliberately NO inversion / margin normalisation here (tried 09-15,
+                // reverted 09-16). The digit read areas include the badge's rounded
+                // corner; inverting turned that light wedge into a black blob that
+                // Tesseract read as a leading '1' -- badge 6 -> 16 and 8 -> 18 both
+                // crossed the >=16 plant gate. Left as white-on-black, the same wedge
+                // is ignored and the residual misses ('13' -> letters) yield no digits
+                // -> -1 -> the caller skips: a SAFE failure. The real fix for the 13s
+                // is a crop that holds digits only (tighter read areas), not
+                // preprocessing that acts on everything in the rectangle.
 
-                byte[] pngBytes = padded.ToBytes(".png");
+                byte[] pngBytes = thresholded.ToBytes(".png");
                 lock (_engineLock)
                 {
                     TesseractEngine engine = GetEngine(lang);
