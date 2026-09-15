@@ -26,6 +26,7 @@ namespace Garden
                 public int y { get; set; }
                 public int width { get; set; }
                 public int height { get; set; }
+                public string? lang { get; set; }   // mirrors RoiDetector.ReadArea: must round-trip through edits
             }
         }
 

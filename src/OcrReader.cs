@@ -7,7 +7,9 @@ namespace Garden
     public class OcrReader : IDisposable
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-        private readonly TesseractEngine _engine;
+        private readonly Dictionary<string, TesseractEngine> _engines = new();
+        private readonly string _tessDataPath;
+        private readonly string _defaultLang;
         private readonly string _debugDir;
         private readonly string _ringDir;
         private readonly string?[] _ringFiles = new string?[RingSize];
@@ -17,25 +19,41 @@ namespace Garden
 
         public OcrReader(string tessDataPath, string debugDir, string lang)
         {
-            // Language configurable via config.json (default: jpn). No whitelist --
-            // the engine returns raw text and callers interpret it: getOcrInt strips
-            // non-digits, getOcrStr takes it as-is. Lets mixed text (digits + 年/月/日)
-            // like the jouro deadline survive instead of being forced to digits.
-            if (string.IsNullOrEmpty(lang)) { lang = "jpn"; }
-            _engine = new TesseractEngine(tessDataPath, lang, EngineMode.Default);
-            // Silence Tesseract's internal diagnostic spew (STATS/baseline prints) by
-            // routing its debug output to the null device.
-            _engine.SetVariable("debug_file", "NUL");
+            // One engine per language, created on first use. The default (config.json,
+            // jpn) suits mixed text like the jouro deadline (digits + 年/月/日). A read
+            // area may name its own `lang`: the jpn LSTM, handed a bare 2-digit crop
+            // with no context, hallucinates kana -- '22' -> 'レ_タ_4', '13' -> '】',
+            // '24' -> 'レ Z|' (ocr_ring + app log, 09-15) -- so digit-only areas read
+            // with eng. No whitelist: callers interpret raw text (getOcrInt strips
+            // non-digits, getOcrStr takes it as-is).
+            _tessDataPath = tessDataPath;
+            _defaultLang = string.IsNullOrEmpty(lang) ? "jpn" : lang;
             _debugDir = debugDir;
             _ringDir = Path.Combine(debugDir, "ocr_ring");
             if (Directory.Exists(_ringDir)) { Directory.Delete(_ringDir, true); }
             Directory.CreateDirectory(_ringDir);
-            Logger.Info($"OCR engine: lang={lang}");
+            GetEngine(_defaultLang);
+        }
+
+        // must be called under _engineLock (the constructor is the one exception)
+        private TesseractEngine GetEngine(string lang)
+        {
+            if (!_engines.TryGetValue(lang, out var engine))
+            {
+                engine = new TesseractEngine(_tessDataPath, lang, EngineMode.Default);
+                // Silence Tesseract's internal diagnostic spew (STATS/baseline prints) by
+                // routing its debug output to the null device.
+                engine.SetVariable("debug_file", "NUL");
+                _engines[lang] = engine;
+                Logger.Info($"OCR engine: lang={lang}");
+            }
+            return engine;
         }
 
         // Returns the raw recognized text (trimmed), or "" on failure.
-        public string Read(Mat mat, string debugKey = "")
+        public string Read(Mat mat, string debugKey = "", string? lang = null)
         {
+            if (string.IsNullOrEmpty(lang)) { lang = _defaultLang; }
             try
             {
                 using Mat upscaled = new Mat();
@@ -44,14 +62,29 @@ namespace Garden
                 Cv2.CvtColor(upscaled, gray, ColorConversionCodes.BGR2GRAY);
                 using Mat thresholded = new Mat();
                 Cv2.Threshold(gray, thresholded, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+                // Tesseract is trained on dark text over a light page with a margin
+                // around it. Game badges are the opposite -- light digits on a coloured
+                // disc, cropped tight -- and that is exactly what broke the eng read of
+                // '13' ('EES', 'Rk', 09-15): white-on-black, glyphs touching the edge,
+                // the disc rim leaking in as a blob beside the thin '1'. Normalise here,
+                // once, for every read: a mostly-dark page is inverted, then padded
+                // with a white margin. Dark-on-light reads (the deadline) pass through
+                // unchanged apart from the margin.
+                if (Cv2.CountNonZero(thresholded) < thresholded.Rows * thresholded.Cols / 2)
+                {
+                    Cv2.BitwiseNot(thresholded, thresholded);
+                }
+                using Mat padded = new Mat();
+                Cv2.CopyMakeBorder(thresholded, padded, 20, 20, 20, 20, BorderTypes.Constant, Scalar.White);
 
-                byte[] pngBytes = thresholded.ToBytes(".png");
+                byte[] pngBytes = padded.ToBytes(".png");
                 lock (_engineLock)
                 {
+                    TesseractEngine engine = GetEngine(lang);
                     using var pix = Pix.LoadFromMemory(pngBytes);
-                    using var page = _engine.Process(pix, PageSegMode.SingleWord);
+                    using var page = engine.Process(pix, PageSegMode.SingleWord);
                     string text = NormalizeDigits(page.GetText().Trim());
-                    if (!string.IsNullOrEmpty(debugKey)) { RingSave(debugKey, gray, thresholded, text); }
+                    if (!string.IsNullOrEmpty(debugKey)) { RingSave(debugKey, lang, gray, thresholded, text); }
                     return text;
                 }
             }
@@ -84,13 +117,13 @@ namespace Garden
         // key and result in the filename. When a read turns out wrong hours
         // later, the evidence is already on disk -- the flight-recorder
         // philosophy, in pixels. ~64 small crops, disk bounded.
-        private void RingSave(string key, Mat gray, Mat thresholded, string result)
+        private void RingSave(string key, string lang, Mat gray, Mat thresholded, string result)
         {
             try
             {
                 int slot = _ringSeq % RingSize;
                 if (_ringFiles[slot] != null) { File.Delete(_ringFiles[slot]!); }
-                string path = Path.Combine(_ringDir, $"{_ringSeq:D5}_{Sanitize(key)}={Sanitize(result)}.png");
+                string path = Path.Combine(_ringDir, $"{_ringSeq:D5}_{Sanitize(key)}@{lang}={Sanitize(result)}.png");
                 using Mat stacked = new Mat();
                 Cv2.VConcat(new[] { gray, thresholded }, stacked);
                 stacked.SaveImage(path);
@@ -114,7 +147,7 @@ namespace Garden
 
         public void Dispose()
         {
-            _engine.Dispose();
+            foreach (TesseractEngine e in _engines.Values) { e.Dispose(); }
         }
     }
 }

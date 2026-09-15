@@ -65,6 +65,7 @@ namespace Garden
         public void AbortLua() => _bot.AbortEval();
         public void SetScanEnabled(bool on) => _roiDetector.SetScanEnabled(on);
         public bool ScanEnabled => _roiDetector.ScanEnabled;
+        public void OcrRead(string path, string? lang) => _roiDetector.OcrRead(path, lang);
 
         public FrameManager(string imageSavePath, LuaBot bot, MouseEventRecorder mouseRecorder, ActionPlayer actionPlayer, RoiRecorder roiRecorder, RoiDetector roiDetector, WindowPositionManager windowPosManager, ScrcpyManager scrcpyManager, ScrcpyManager.GardenServer gardenServer)
         {

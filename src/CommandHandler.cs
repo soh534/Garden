@@ -139,6 +139,14 @@ namespace Garden
                     }
                     return true;
 
+                case "ocr":
+                    if (verb == "read" && parts.Length >= 3)
+                    {
+                        _frameManager.OcrRead(parts[2], parts.Length > 3 ? parts[3] : null);
+                    }
+                    else { Console.WriteLine("Usage: ocr read <png|dir> [lang]"); }
+                    return true;
+
                 case "bot":
                     switch (verb)
                     {
@@ -203,6 +211,7 @@ namespace Garden
             Console.WriteLine("  roi tune <name>             - Auto-set threshold from live samples (ROI must be on screen)");
             Console.WriteLine("  roi readarea <name> add     - Add a read area (then drag + name it)");
             Console.WriteLine("  roi readarea <name> remove <area> - Remove a read area");
+            Console.WriteLine("  ocr read <png|dir> [lang]   - Run the OCR pipeline on saved crops (verify a read-area language offline)");
             Console.WriteLine("  bot start                   - Start the bot automation");
             Console.WriteLine("  bot stop                    - Stop the bot automation");
             Console.WriteLine("  help                        - Show this help message");

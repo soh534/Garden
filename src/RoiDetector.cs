@@ -30,6 +30,7 @@ namespace Garden
                 public int y { get; set; }
                 public int width { get; set; }
                 public int height { get; set; }
+                public string? lang { get; set; }   // OCR language for this area; null = engine default
             }
         }
 
@@ -347,7 +348,7 @@ namespace Garden
                         var readRect = new Rect(areaX, areaY, areaW, areaH);
                         readAreaRects[key] = readRect;
                         using Mat readMat = new Mat(frame, readRect);
-                        ocrReadings[key] = _ocrReader.Read(readMat, key);
+                        ocrReadings[key] = _ocrReader.Read(readMat, key, readArea.lang);
                     }
 
                     _snapshot = new DetectionSnapshot(_snapshot.WaitingForRoi, _snapshot.WaitingRoiResult, ocrReadings, readAreaRects, _snapshot.LatestScores);
@@ -372,6 +373,23 @@ namespace Garden
             lock (_roiMatsLock)
             {
                 return _savedRoiData.Keys.ToList();
+            }
+        }
+
+        // console `ocr read <png|dir> [lang]`: run the exact live read pipeline on
+        // saved crops (cut from the video ring) so a read-area language is verified
+        // against KNOWN digits before it goes live -- never "should work"
+        public void OcrRead(string path, string? lang)
+        {
+            string[] files = Directory.Exists(path)
+                ? Directory.GetFiles(path, "*.png").OrderBy(f => f).ToArray()
+                : new[] { path };
+            foreach (string f in files)
+            {
+                using Mat m = Cv2.ImRead(f);
+                if (m.Empty()) { Console.WriteLine($"  {Path.GetFileName(f)}: cannot read image"); continue; }
+                string text = _ocrReader.Read(m, "", lang);
+                Console.WriteLine($"  {Path.GetFileName(f),-28} -> '{text}'");
             }
         }
 
@@ -546,7 +564,7 @@ namespace Garden
                                     int ah = Math.Min(ra.height, frame.Height - ay);
                                     if (aw <= 0 || ah <= 0) { continue; }
                                     using Mat readMat = new Mat(frame, new Rect(ax, ay, aw, ah));
-                                    readings[ra.name] = _ocrReader.Read(readMat);
+                                    readings[ra.name] = _ocrReader.Read(readMat, "", ra.lang);
                                 }
                             }
                             var result = new RoiScanResult(score, detected, centerX, centerY, clickX, clickY, readings);
