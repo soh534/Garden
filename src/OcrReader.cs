@@ -62,17 +62,17 @@ namespace Garden
                 Cv2.CvtColor(upscaled, gray, ColorConversionCodes.BGR2GRAY);
                 using Mat thresholded = new Mat();
                 Cv2.Threshold(gray, thresholded, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
-                // Deliberately NO inversion / margin normalisation here (tried 09-15,
-                // reverted 09-16). The digit read areas include the badge's rounded
-                // corner; inverting turned that light wedge into a black blob that
-                // Tesseract read as a leading '1' -- badge 6 -> 16 and 8 -> 18 both
-                // crossed the >=16 plant gate. Left as white-on-black, the same wedge
-                // is ignored and the residual misses ('13' -> letters) yield no digits
-                // -> -1 -> the caller skips: a SAFE failure. The real fix for the 13s
-                // is a crop that holds digits only (tighter read areas), not
-                // preprocessing that acts on everything in the rectangle.
+                // Tesseract segments glyphs against the page around them. A crop cut to
+                // the digit extents (the tightened read areas) has no page: '11' with no
+                // margin is one tall blob -> 'i' (109111, 09-16 13:14), '22' -> 'pY.'.
+                // Add the margin in the image's OWN page colour (majority of its border),
+                // so polarity is untouched -- the 09-15 WHITE margin + inversion is what
+                // turned a light corner wedge into a phantom leading '1'. No inversion.
+                Scalar pageColour = PageColour(thresholded);
+                using Mat padded = new Mat();
+                Cv2.CopyMakeBorder(thresholded, padded, 16, 16, 16, 16, BorderTypes.Constant, pageColour);
 
-                byte[] pngBytes = thresholded.ToBytes(".png");
+                byte[] pngBytes = padded.ToBytes(".png");
                 lock (_engineLock)
                 {
                     TesseractEngine engine = GetEngine(lang);
@@ -105,6 +105,25 @@ namespace Garden
                 else { sb.Append(c); }
             }
             return sb.ToString();
+        }
+
+        // the binary image's page colour = whichever value dominates its border
+        private static Scalar PageColour(Mat bin)
+        {
+            int white = 0, total = 0;
+            for (int x = 0; x < bin.Cols; x++)
+            {
+                if (bin.At<byte>(0, x) == 255) { white++; }
+                if (bin.At<byte>(bin.Rows - 1, x) == 255) { white++; }
+                total += 2;
+            }
+            for (int y = 1; y < bin.Rows - 1; y++)
+            {
+                if (bin.At<byte>(y, 0) == 255) { white++; }
+                if (bin.At<byte>(y, bin.Cols - 1) == 255) { white++; }
+                total += 2;
+            }
+            return white * 2 > total ? Scalar.White : Scalar.Black;
         }
 
         // Always-on OCR forensics: every keyed read drops what Tesseract saw
