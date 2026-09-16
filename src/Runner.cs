@@ -92,6 +92,16 @@ namespace Garden
             LuaBot bot = new(luaScriptPath, roiDetector, actionPlayer);
             FrameManager ssManager = new(imageSavePath, bot, mouseRecorder, actionPlayer, roiRecorder, roiDetector, windowPosManager, scrcpyManager, gardenServer);
 
+            // Same as typing `bot start`: the flag is read by the bot loop, which
+            // ProcessFrames only launches once the capture is live -- so arming it
+            // here never runs Lua against a screen that isn't there yet. Set
+            // bot.autoStart false in config.json for a recording session.
+            if (configManager.BotAutoStart)
+            {
+                ssManager.EnableBot();
+                Console.WriteLine("[Garden] bot auto-started (config bot.autoStart)");
+            }
+
 
             var processingTask = Task.Run(() => ssManager.ProcessFrames(cts, proc, commandQueue, actionQueue), cts.Token);
 

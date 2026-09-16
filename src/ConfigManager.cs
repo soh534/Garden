@@ -10,12 +10,19 @@ namespace Garden
         public double Scale => _config.scale ?? 1.0;
         public Config.WindowPositions? WindowPositions => _config.windowPositions;
         public string OcrLang => _config.ocr?.lang ?? "jpn";
+        public bool BotAutoStart => _config.bot?.autoStart ?? false;
 
         public class Config
         {
             public double? scale { get; set; }
             public WindowPositions? windowPositions { get; set; }
             public Ocr? ocr { get; set; }
+            public Bot? bot { get; set; }
+
+            public class Bot
+            {
+                public bool? autoStart { get; set; }
+            }
 
             public class Ocr
             {
