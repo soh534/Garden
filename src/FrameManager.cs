@@ -61,6 +61,8 @@ namespace Garden
         public bool IsBotEnabled => _isBotEnabled;
         public void EnableBot()  { _isBotEnabled = true;  _bot.Enable(); }
         public void DisableBot() { _isBotEnabled = false; _bot.Disable(); }
+        public void PauseBot()   { _bot.Pause(); }
+        public void ResumeBot()  { _bot.Resume(); }
         public void EvalLua(string code) => _bot.Eval(code);
         public void AbortLua() => _bot.AbortEval();
         public void SetScanEnabled(bool on) => _roiDetector.SetScanEnabled(on);
@@ -547,7 +549,7 @@ namespace Garden
             string waitTarget = snapshot.WaitingForRoi ?? "none";
             bool found = snapshot.WaitingRoiResult.HasValue;
             Scalar color = found ? Scalar.LimeGreen : Scalar.Yellow;
-            string status = _isBotEnabled ? "ON" : "OFF";
+            string status = !_isBotEnabled ? "OFF" : _bot.IsHeld ? "PAUSED" : _bot.PauseRequested ? "PAUSING" : "ON";
             Cv2.PutText(frame, $"Bot:{status} Waiting:{waitTarget} [{(found ? "FOUND" : "searching")}]",
                 new OpenCvSharp.Point(10, 20), HersheyFonts.HersheySimplex, 0.5, color, 2);
         }

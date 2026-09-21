@@ -23,6 +23,10 @@ namespace Garden.Bots
 
             _lua["queueWait"]     = (Action<int>)(ms => _actionPlayer.QueueWait(ms));
             _lua["waitMs"]        = (Action<int>)(ms => WaitMs(ms));
+            // internal, for stdlib's waitUntil only: a timed poll is tied to the real
+            // game, so `bot pause` must not land inside one -- it waits for the poll to end
+            _lua["_pollEnter"]    = (Action)(() => _pollDepth++);
+            _lua["_pollExit"]     = (Action)(() => { if (_pollDepth > 0) { _pollDepth--; } });
             _lua["getOcrInt"]     = (Func<string, int>)(key => GetOcrInt(key));
             _lua["getOcrStr"]     = (Func<string, string>)(key => GetOcrStr(key));
             _lua["queueAction"]   = (Action<string>)(actionName => QueueAction(actionName, null));
@@ -67,6 +71,9 @@ namespace Garden.Bots
         private volatile string? _pendingEval = null;
         private volatile bool _evaluating = false;
         private volatile bool _abortEval = false;
+        private volatile bool _pauseRequested = false;
+        private volatile bool _held = false;
+        private int _pollDepth;       // bot thread only; > 0 = inside a timed poll
         private readonly FileSystemWatcher _watcher;
         private DateTime _lastWatcherEvent = DateTime.MinValue;
         private CancellationToken _token;
@@ -103,6 +110,7 @@ namespace Garden.Bots
             while (elapsed < ms)
             {
                 CheckAbort();
+                HoldWhilePaused();
                 int chunk = Math.Min(50, ms - elapsed);
                 Thread.Sleep(chunk);
                 elapsed += chunk;
@@ -110,8 +118,38 @@ namespace Garden.Bots
             CheckAbort();
         }
 
-        public void Enable()   => _enabled = true;
+        // `bot pause` takes effect HERE and only here (plus between passes, in Run):
+        // inside a relative wait, where nothing but settle-time is passing. The
+        // wait's own counter doesn't advance while held, so it keeps its remaining
+        // time. Never inside a timed poll (waitUntil): those track the real game,
+        // so the request waits for the poll to end. Everything on absolute time is
+        // untouched: os.time(), the schedule, the action pump (an action in flight
+        // always completes -- WaitForActions is not a hold point), the capture
+        // watchdog. `bot stop` / quit still unwind from a hold.
+        private void HoldWhilePaused()
+        {
+            if (!_pauseRequested || _evaluating || _pollDepth > 0) { return; }
+            _held = true;
+            var since = DateTime.Now;
+            Console.WriteLine("[Garden] bot paused (in a wait) -- `bot resume` continues from here");
+            _roiDetector.LogEvent("(engine) PAUSED in a wait");
+            try
+            {
+                while (_pauseRequested) { CheckAbort(); Thread.Sleep(50); }
+            }
+            finally
+            {
+                _held = false;
+                _roiDetector.LogEvent($"(engine) RESUMED after {(DateTime.Now - since).TotalSeconds:F0}s");
+            }
+        }
+
+        public void Enable()   { _pauseRequested = false; _enabled = true; }   // `bot start` always runs
         public void Disable()  => _enabled = false;
+        public void Pause()    => _pauseRequested = true;
+        public void Resume()   => _pauseRequested = false;
+        public bool PauseRequested => _pauseRequested;
+        public bool IsHeld         => _held;
         public void Eval(string code) => _pendingEval = code;
         public void AbortEval() => _abortEval = true;
 
@@ -359,6 +397,21 @@ namespace Garden.Bots
                 var evalCode = Interlocked.Exchange(ref _pendingEval, null);
                 if (evalCode != null) { RunEval(evalCode); }
                 if (!_enabled) { Thread.Sleep(100); continue; }
+                // idle bot: hold between passes. Non-blocking on purpose -- the reload
+                // and `lua` eval servicing above keep running while paused here.
+                if (_pauseRequested)
+                {
+                    if (!_held)
+                    {
+                        _held = true;
+                        Console.WriteLine("[Garden] bot paused (between visits)");
+                        _roiDetector.LogEvent("(engine) PAUSED between visits");
+                    }
+                    Thread.Sleep(100);
+                    continue;
+                }
+                if (_held) { _held = false; _roiDetector.LogEvent("(engine) RESUMED"); }
+                _pollDepth = 0;   // a pass that unwound mid-poll (stop, error) can't leave it stuck
                 try { main!.Call(); }
                 catch (Exception ex)
                 {

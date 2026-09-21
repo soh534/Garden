@@ -115,6 +115,7 @@ Typed into the console while running:
 | `abort` | Cancel a running `lua` eval |
 | `scan on` / `scan off` | Toggle the background detection scan / overlay (default off) |
 | `bot start` / `bot stop` | Start/stop bot automation |
+| `bot pause` / `bot resume` | Hold at the next relative wait -- mid-script, Lua stack intact -- and continue from that exact statement. Never lands mid-action or inside a `waitUntil` poll; absolute time (schedule, `os.time()`) keeps running |
 | `help` | Show command help |
 | `quit` | Exit |
 
@@ -166,6 +167,7 @@ primitives above. Action names are parameters, never assumptions:
 | `doIf(roi, action, ms)` → bool | If the ROI is visible: replay action at it, wait, return true |
 | `repeatUntilVisible(action, roi, tries, ms)` | Repeat an action until a target ROI appears (capped) |
 | `drainWhileVisible(roi, action, ms)` | Repeat an action while an ROI remains visible |
+| `waitUntil(ms, fn)` | Poll `fn` until it returns non-nil, up to `ms` of real time; nil on timeout. `bot pause` never lands inside one |
 
 The script hot-reloads — edits are picked up live without restarting (note:
 script-local variables re-initialize on every reload). `roi_metadata.json`

@@ -33,3 +33,19 @@ function drainWhileVisible(roiName, actionName, ms)
         waitMs(ms or 3000)
     end
 end
+
+-- Poll fn until it returns non-nil, for up to ms of REAL time. A timed poll
+-- tracks the real game (a screen loading), so `bot pause` never lands inside
+-- one: it takes effect at the first ordinary wait after the poll ends.
+-- fn returns nil to keep polling; any other value (including false) ends the
+-- poll and is returned. Returns nil on timeout.
+function waitUntil(ms, fn)
+    _pollEnter()
+    local deadline = os.time() + ms / 1000
+    local r = nil
+    while r == nil and os.time() < deadline do
+        r = fn()
+    end
+    _pollExit()
+    return r
+end

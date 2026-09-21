@@ -158,6 +158,14 @@ namespace Garden
                             _frameManager.DisableBot();
                             Console.WriteLine("Bot stopped.");
                             break;
+                        case "pause":
+                            _frameManager.PauseBot();
+                            Console.WriteLine("Pause requested -- lands at the next wait (an action in flight, or a login poll, finishes first).");
+                            break;
+                        case "resume":
+                            _frameManager.ResumeBot();
+                            Console.WriteLine("Bot resumed.");
+                            break;
                     }
                     return true;
 
@@ -214,6 +222,7 @@ namespace Garden
             Console.WriteLine("  ocr read <png|dir> [lang]   - Run the OCR pipeline on saved crops (verify a read-area language offline)");
             Console.WriteLine("  bot start                   - Start the bot automation");
             Console.WriteLine("  bot stop                    - Stop the bot automation");
+            Console.WriteLine("  bot pause | bot resume      - Hold at the next wait, mid-script / continue from that exact point");
             Console.WriteLine("  help                        - Show this help message");
             Console.WriteLine("  quit                        - Exit application");
             Console.WriteLine();
