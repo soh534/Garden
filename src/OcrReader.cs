@@ -20,7 +20,7 @@ namespace Garden
         public OcrReader(string tessDataPath, string debugDir, string lang)
         {
             // One engine per language, created on first use. The default (config.json,
-            // jpn) suits mixed text like the jouro deadline (digits + 年/月/日). A read
+            // jpn) suits mixed text such as a date field (digits + 年/月/日). A read
             // area may name its own `lang`: the jpn LSTM, handed a bare 2-digit crop
             // with no context, hallucinates kana -- '22' -> 'レ_タ_4', '13' -> '】',
             // '24' -> 'レ Z|' (ocr_ring + app log, 09-15) -- so digit-only areas read
@@ -64,7 +64,7 @@ namespace Garden
                 Cv2.Threshold(gray, thresholded, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
                 // Tesseract segments glyphs against the page around them. A crop cut to
                 // the digit extents (the tightened read areas) has no page: '11' with no
-                // margin is one tall blob -> 'i' (109111, 09-16 13:14), '22' -> 'pY.'.
+                // margin is one tall blob -> 'i'; '22' -> 'pY.' (measured on live crops).
                 // Add the margin in the image's OWN page colour (majority of its border),
                 // so polarity is untouched -- the 09-15 WHITE margin + inversion is what
                 // turned a light corner wedge into a phantom leading '1'. No inversion.

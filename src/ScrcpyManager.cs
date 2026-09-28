@@ -125,7 +125,7 @@ namespace Garden
         {
             ProcessStartInfo startInfo = new();
             startInfo.FileName = Executable;
-            startInfo.Arguments = "--no-mouse-hover --stay-awake --power-off-on-close --window-title=Garden"; // Without this, seed is planted without hovering.
+            startInfo.Arguments = "--no-mouse-hover --stay-awake --power-off-on-close --window-title=Garden"; // no-mouse-hover: hover events would register as taps in some apps
             startInfo.RedirectStandardOutput = true;
             startInfo.RedirectStandardError = true;
             startInfo.UseShellExecute = false;

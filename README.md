@@ -195,7 +195,7 @@ so a hot-reload or restart resumes from up-to-date state.
 
 **Float caveat:** numbers come back from `stateLoad` as Lua floats. Table
 lookups with numeric keys are unaffected (Lua normalizes integral floats), but a
-string built from a loaded number gets a trailing `.0` — `"p" .. plantTime`
+string built from a loaded number gets a trailing `.0` — `"k" .. loadedTime`
 forks into a second key after every reload. `math.floor()` numbers before
 concatenating them into keys.
 
