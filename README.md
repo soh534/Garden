@@ -63,6 +63,16 @@ Environment variables:
 A phone with USB debugging enabled and authorized must be connected
 (`adb devices` should show `device`, not `unauthorized`).
 
+### Auto-start at logon
+
+`launch.bat` is the one thing a machine starts: it waits for the phone
+(`adb wait-for-device`), runs `dotnet run` from `src` (rebuilds if the source
+changed; `bot.autoStart` arms the bot), and relaunches 30s after a crash. A
+typed `quit` ends it. To install, drop a shortcut to it (minimized) in
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`. The file is
+CRLF + ASCII on purpose (`.gitattributes` pins `*.bat`): bare-LF lines make
+`cmd` on a CP932 console eat leading characters.
+
 ### config.json
 
 Shipped next to the executable (`../config.json`, linked into the build):
