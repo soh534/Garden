@@ -504,8 +504,13 @@ namespace Garden
             {
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName
             };
+            // Renamed too: editors that save atomically write a temp file and rename
+            // it over the target, which raises neither Changed nor Created -- a
+            // template edited that way stayed unloaded while the engine kept
+            // scoring the old one.
             _fileWatcher.Changed += OnRoiDataFileChanged;
             _fileWatcher.Created += OnRoiDataFileChanged;
+            _fileWatcher.Renamed += OnRoiDataFileChanged;
             _fileWatcher.EnableRaisingEvents = true;
             Logger.Info("File watcher setup for roi_metadata.json");
         }
@@ -518,6 +523,7 @@ namespace Garden
             Thread.Sleep(100);
             Reload();
             Console.WriteLine("[RoiDetector] Reload complete.");
+            LogEvent("(engine) roi_metadata.json reloaded");
         }
 
         private void LoadRoiData()
