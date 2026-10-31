@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Net.Sockets;
 
@@ -27,7 +28,9 @@ namespace Garden
         private readonly int _phoneWidth;
         private readonly int _phoneHeight;
         private Mat? _latestVideoFrame;
+        private CaptureTiming.FrameStamp? _latestVideoStamp;
         private readonly object _videoFrameLock = new();
+        private readonly CaptureTiming _timing;
 
         // --- capture-session self-heal ---------------------------------------
         // The phone-side scrcpy server dies after long uptimes (~35h observed:
@@ -84,6 +87,7 @@ namespace Garden
             _phoneWidth       = gardenServer.PhoneWidth;
             _phoneHeight      = gardenServer.PhoneHeight;
             _videoRing        = new VideoRing(imageSavePath);
+            _timing           = new CaptureTiming(imageSavePath, roiDetector.LogEvent);
             bot.PreserveVideo = tag => _videoRing.Preserve(tag);
         }
 
@@ -97,9 +101,14 @@ namespace Garden
             int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
             _ffmpegOutputListener = listener;
 
+            // -threads 1 on BOTH sides of -i: a frame-threaded codec holds frames back
+            // to keep its threads busy. On the decoder that was the old "capture lags
+            // the phone" bug; on the output side the rawvideo encoder still held one
+            // frame -- and on a stream that goes quiet whenever the screen does, a held
+            // frame stays held until the screen next changes.
             var proc = new Process();
             proc.StartInfo.FileName               = "ffmpeg";
-            proc.StartInfo.Arguments              = $"-loglevel warning -fflags +discardcorrupt -probesize 32 -analyzeduration 0 -threads 1 -f h264 -i pipe:0 -f rawvideo -pix_fmt bgr24 tcp://127.0.0.1:{port}";
+            proc.StartInfo.Arguments              = $"-loglevel warning -fflags +discardcorrupt -probesize 32 -analyzeduration 0 -threads 1 -f h264 -i pipe:0 -threads 1 -f rawvideo -pix_fmt bgr24 tcp://127.0.0.1:{port}";
             proc.StartInfo.RedirectStandardInput  = true;
             proc.StartInfo.RedirectStandardError  = true;
             proc.StartInfo.UseShellExecute        = false;
@@ -114,6 +123,15 @@ namespace Garden
             return proc;
         }
 
+        // Written into ffmpeg after every frame packet. scrcpy sends exactly one access
+        // unit (one frame) per packet, but the raw H.264 piped into ffmpeg has no packet
+        // boundaries: its parser knows a frame has ended only when the NEXT frame's first
+        // bytes arrive, so the last frame of every burst sat inside ffmpeg until the
+        // screen changed again. An access unit delimiter is H.264's own "a new access
+        // unit starts here" marker -- the boundary scrcpy already gave us, passed on.
+        // The ring keeps the packets exactly as received.
+        private static readonly byte[] AccessUnitDelimiter = { 0x00, 0x00, 0x00, 0x01, 0x09, 0xF0 };
+
         private void VideoStreamLoop(Process ffmpeg, int gen, CancellationToken token)
         {
             var header = new byte[12];
@@ -122,17 +140,29 @@ namespace Garden
             {
                 while (!token.IsCancellationRequested)
                 {
+                    long t0 = Stopwatch.GetTimestamp();
                     stream.ReadExactly(header);
                     // scrcpy packet header: top bits of the 8-byte PTS field
-                    // flag config (SPS/PPS) and keyframe packets
+                    // flag config (SPS/PPS) and keyframe packets; the rest is
+                    // the phone-side capture time in microseconds
                     bool isConfig   = (header[0] & 0x80) != 0;
                     bool isKeyFrame = (header[0] & 0x40) != 0;
+                    long ptsUs = (long)(BinaryPrimitives.ReadUInt64BigEndian(header) & 0x3FFF_FFFF_FFFF_FFFFUL);
                     int packetSize = (header[8] << 24) | (header[9] << 16) | (header[10] << 8) | header[11];
                     var data = new byte[packetSize];
                     stream.ReadExactly(data);
+                    long t1 = Stopwatch.GetTimestamp();
+                    _timing.OnPacket(ptsUs, isConfig, isKeyFrame, packetSize, t1, t1 - t0);
                     _videoRing.Write(data, isConfig, isKeyFrame);
-                    ffmpeg.StandardInput.BaseStream.Write(data, 0, data.Length);
-                    ffmpeg.StandardInput.BaseStream.Flush();
+                    long t2 = Stopwatch.GetTimestamp();
+                    var ffIn = ffmpeg.StandardInput.BaseStream;
+                    ffIn.Write(data, 0, data.Length);
+                    if (!isConfig)
+                    {
+                        ffIn.Write(AccessUnitDelimiter, 0, AccessUnitDelimiter.Length);
+                    }
+                    ffIn.Flush();
+                    _timing.OnForwarded(t2 - t1, Stopwatch.GetTimestamp() - t2);
                 }
             }
             catch (Exception e)
@@ -155,13 +185,17 @@ namespace Garden
             {
                 while (!token.IsCancellationRequested)
                 {
+                    long t0 = Stopwatch.GetTimestamp();
                     stream.ReadExactly(buf);
+                    long t1 = Stopwatch.GetTimestamp();
                     var mat = new Mat(_phoneHeight, _phoneWidth, MatType.CV_8UC3);
                     Marshal.Copy(buf, 0, mat.Data, frameSize);
+                    var stamp = _timing.OnFrame(t1, t1 - t0);
                     lock (_videoFrameLock)
                     {
                         _latestVideoFrame?.Dispose();
                         _latestVideoFrame = mat;
+                        _latestVideoStamp = stamp;
                     }
                     Interlocked.Exchange(ref _lastFrameTicks, DateTime.UtcNow.Ticks);
                     Interlocked.Increment(ref _frameSeq);
@@ -182,6 +216,7 @@ namespace Garden
         private bool StartSession(CancellationToken token)
         {
             int gen = ++_sessionGen;
+            _timing.NewSession(gen);
             var ffmpeg = StartVideoDecoder(_phoneWidth, _phoneHeight);
             _ffmpeg = ffmpeg;
             Task.Run(() => VideoStreamLoop(ffmpeg, gen, token));
@@ -319,6 +354,7 @@ namespace Garden
 
                 try
                 {
+                    _timing.Tick(Stopwatch.GetTimestamp());
                     if (_streamDead) { RebuildSession(token); }
                     else
                     {
@@ -378,11 +414,17 @@ namespace Garden
 
                     _sw.Restart();
                     Mat? phoneFrame = null;
-                    lock (_videoFrameLock) { phoneFrame = _latestVideoFrame?.Clone(); }
+                    CaptureTiming.FrameStamp? phoneStamp = null;
+                    lock (_videoFrameLock)
+                    {
+                        phoneFrame = _latestVideoFrame?.Clone();
+                        phoneStamp = _latestVideoStamp;
+                    }
                     if (phoneFrame == null) { Thread.Sleep(1); continue; }
 
                     _roiRecorder.SetCurrentFrame(phoneFrame);
                     _roiDetector.SetFrame(phoneFrame);
+                    _timing.OnView(phoneStamp, Stopwatch.GetTimestamp());
                     _msCapture = _sw.Elapsed.TotalMilliseconds;
 
                     lock (_frameLock)
