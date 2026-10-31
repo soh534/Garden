@@ -51,6 +51,14 @@ cd src
 dotnet run
 ```
 
+Offline harnesses run the live pipelines on saved images and exit, with no phone
+or console (their debug output goes to a temp folder, never the live recorder):
+
+```powershell
+Garden.exe --ocr-read <png|dir> [lang]   # OCR each crop exactly as a read-area would
+Garden.exe --find-all <roi> <png|dir>    # every match of an ROI per frame, with its reads
+```
+
 Environment variables:
 
 - `GARDEN_DATA` — directory holding your ROIs, actions, and Lua script
@@ -156,6 +164,8 @@ end
 | `roiVisible(name)` → bool | True if the ROI is currently detected (also runs its OCR read-areas) |
 | `queueAction(name)` | Replay an action at its recorded coordinates |
 | `queueActionAt(name, roi)` | Replay an action offset to the ROI's click point |
+| `roiFindAll(name)` → list | Every place the ROI matches, top to bottom: `{x, y, score, clickX, clickY, read = {area = text}}`, each with its read-areas OCR'd **at that match** — for lists of repeated rows |
+| `queueActionAtPoint(name, x, y)` | Replay an action offset to an arbitrary point (e.g. a `roiFindAll` match's click point) |
 | `getRoiScore(name)` → number | Raw match score (lower = better match) |
 | `getOcrInt(key)` → int | Digits of the last OCR read of `"roiName/areaName"`; −1 if no digits or never read |
 | `getOcrStr(key)` → string | The raw OCR text (for mixed text such as dates) |
@@ -236,6 +246,12 @@ digit-only areas `"lang": "eng"`. **Draw digit boxes tight** — the digits and
 nothing else. Background caught inside the box (a badge's rounded corner, a
 neighbouring glyph) is read as a character, and a wrong *digit* is worse than
 no read: `getOcrInt` returns −1 on garbage, which a script can skip.
+
+**Lists of repeated rows:** don't read rows through boxes at fixed screen
+positions — rows land at different heights as the list scrolls or the screen
+re-lays out. Record one searchable ROI on something every row shares, give it a
+read-area on the varying part, and call `roiFindAll`: each row is found and read
+in place.
 
 Verify a read-area before trusting it: cut crops from the video ring, name
 them by their true value, and run `ocr read <dir> [lang]`. Every keyed read

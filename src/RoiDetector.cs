@@ -34,6 +34,9 @@ namespace Garden
             }
         }
 
+        // one place a template matched, with its read areas OCR'd at THAT place
+        public record RoiMatch(int X, int Y, double Score, int ClickX, int ClickY, Dictionary<string, string> Readings);
+
         public struct DetectedRoiInfo
         {
             public string RoiName;
@@ -120,6 +123,85 @@ namespace Garden
             _frameArrived.Set();
         }
 
+        // Every place a template matches on the current frame, top to bottom, each with
+        // its read areas OCR'd relative to that match -- for lists of repeated rows,
+        // where TryFindRoi (best match only) can see just one row and a fixed read area
+        // reads whatever happens to scroll under it. Same threshold rule as TryFindRoi;
+        // each pick suppresses its own neighbourhood so the next is a different place.
+        // A fixed-location ROI has exactly one place and behaves like TryFindRoi.
+        public List<RoiMatch> FindAllRoi(string name, int maxCount)
+        {
+            var matches = new List<RoiMatch>();
+            Mat? frame;
+            lock (_frameLock)
+            {
+                frame = _latestFrame?.Clone();
+            }
+            if (frame == null) { return matches; }
+
+            try
+            {
+                double best = double.NaN;
+                lock (_roiMatsLock)
+                {
+                    if (!_savedRoiData.TryGetValue(name, out RoiData? roiData)) { return matches; }
+                    if (!_roiMats.TryGetValue(name, out Mat? roiMat)) { return matches; }
+                    double threshold = roiData.threshold ?? TemplateThreshold;
+
+                    if (roiData.fixedLocation)
+                    {
+                        DetectRoi(frame, roiMat, roiData, out double score, out int lx, out int ly, out _, out _);
+                        best = score;
+                        if (score < threshold) { matches.Add(MakeMatch(frame, name, roiData, roiMat, lx, ly, score)); }
+                    }
+                    else
+                    {
+                        using Mat result = new Mat();
+                        Cv2.MatchTemplate(frame, roiMat, result, TemplateMatchModes.SqDiffNormed);
+                        while (matches.Count < maxCount)
+                        {
+                            Cv2.MinMaxLoc(result, out double score, out _, out Point loc, out _);
+                            if (double.IsNaN(best)) { best = score; }
+                            if (score >= threshold) { break; }
+                            matches.Add(MakeMatch(frame, name, roiData, roiMat, loc.X, loc.Y, score));
+                            int x0 = Math.Max(0, loc.X - roiMat.Width / 2);
+                            int y0 = Math.Max(0, loc.Y - roiMat.Height / 2);
+                            int x1 = Math.Min(result.Width, loc.X + roiMat.Width / 2 + 1);
+                            int y1 = Math.Min(result.Height, loc.Y + roiMat.Height / 2 + 1);
+                            using Mat neighbourhood = new Mat(result, new Rect(x0, y0, x1 - x0, y1 - y0));
+                            neighbourhood.SetTo(new Scalar(1.0));
+                        }
+                    }
+                }
+                matches.Sort((a, b) => a.Y.CompareTo(b.Y));
+                LogFindAll(name, matches.Count, best);
+                return matches;
+            }
+            finally
+            {
+                frame.Dispose();
+            }
+        }
+
+        // caller holds _roiMatsLock
+        private RoiMatch MakeMatch(Mat frame, string name, RoiData roiData, Mat roiMat, int x, int y, double score)
+        {
+            int clickX = roiData.clickOffsetX.HasValue ? x + roiData.clickOffsetX.Value : x + roiMat.Width / 2;
+            int clickY = roiData.clickOffsetY.HasValue ? y + roiData.clickOffsetY.Value : y + roiMat.Height / 2;
+            var readings = new Dictionary<string, string>();
+            foreach (var ra in roiData.readAreas)
+            {
+                int ax = Math.Max(0, Math.Min(x + ra.x, frame.Width - 1));
+                int ay = Math.Max(0, Math.Min(y + ra.y, frame.Height - 1));
+                int aw = Math.Min(ra.width, frame.Width - ax);
+                int ah = Math.Min(ra.height, frame.Height - ay);
+                if (aw <= 0 || ah <= 0) { continue; }
+                using Mat readMat = new Mat(frame, new Rect(ax, ay, aw, ah));
+                readings[ra.name] = _ocrReader.Read(readMat, $"{name}/{ra.name}", ra.lang);
+            }
+            return new RoiMatch(x, y, score, clickX, clickY, readings);
+        }
+
         public bool TryFindRoi(string name, out DetectedRoiInfo info)
         {
             info = default;
@@ -190,6 +272,28 @@ namespace Garden
                 _detLogRepeat = 1;
                 string score = info.RoiName == null ? "n/a" : info.Score.ToString("F4");
                 AppendDetLog($"{DateTime.Now:MM-dd HH:mm:ss}  {(found ? "HIT " : "miss")}  {name}  score={score}");
+            }
+        }
+
+        // one recorder line per FindAllRoi call: how many places matched, best score
+        private void LogFindAll(string name, int count, double best)
+        {
+            lock (_detLogLock)
+            {
+                string key = name + "|find" + count;
+                if (key == _detLogLastKey)
+                {
+                    _detLogRepeat++;
+                    return;
+                }
+                if (_detLogRepeat > 1)
+                {
+                    AppendDetLog($"                     ... repeated x{_detLogRepeat}");
+                }
+                _detLogLastKey = key;
+                _detLogRepeat = 1;
+                string score = double.IsNaN(best) ? "n/a" : best.ToString("F4");
+                AppendDetLog($"{DateTime.Now:MM-dd HH:mm:ss}  FIND  {name}  n={count}  best={score}");
             }
         }
 

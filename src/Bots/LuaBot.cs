@@ -33,6 +33,8 @@ namespace Garden.Bots
             _lua["queueActionAt"] = (Action<string, string>)((actionName, roiName) => QueueAction(actionName, roiName));
             _lua["getRoiScore"]   = (Func<string, double>)(roiName => GetRoiScore(roiName));
             _lua["roiVisible"]    = (Func<string, bool>)(name => RoiVisible(name));
+            _lua["roiFindAll"]    = (Func<string, LuaTable>)(name => RoiFindAll(name));
+            _lua["queueActionAtPoint"] = (Action<string, int, int>)((actionName, x, y) => QueueActionAtPoint(actionName, x, y));
             _lua["saveVideoEvidence"] = (Func<string, string>)(tag => PreserveVideo?.Invoke(tag) ?? "");
             _lua["pressHome"]     = (Action)(InputManager.Home);
             _lua["log"]           = (Action<string>)(msg =>
@@ -297,6 +299,36 @@ namespace Garden.Bots
                 Logger.Error($"Reload failed: {ex.Message}");
                 _roiDetector.LogEvent($"(engine) RELOAD FAILED: {ex.Message}");
             }
+        }
+
+        // { {x=, y=, score=, clickX=, clickY=, read={area=text}}, ... } top to bottom
+        private LuaTable RoiFindAll(string name)
+        {
+            CheckAbort();
+            LuaTable list = NewTable();
+            long i = 1;
+            foreach (var m in _roiDetector.FindAllRoi(name, 32))
+            {
+                LuaTable row = NewTable();
+                row["x"] = (long)m.X;
+                row["y"] = (long)m.Y;
+                row["score"] = m.Score;
+                row["clickX"] = (long)m.ClickX;
+                row["clickY"] = (long)m.ClickY;
+                LuaTable read = NewTable();
+                foreach (var kv in m.Readings) { read[kv.Key] = kv.Value; }
+                row["read"] = read;
+                list[i++] = row;
+            }
+            return list;
+        }
+
+        // replay an action offset to an arbitrary point (a match from roiFindAll)
+        private void QueueActionAtPoint(string actionName, int x, int y)
+        {
+            if (!_enabled && !_evaluating) { return; }
+            _actionPlayer.QueueReplayWithOffset(actionName, x, y);
+            WaitForActions();
         }
 
         private bool RoiVisible(string name)
