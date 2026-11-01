@@ -21,11 +21,9 @@ namespace Garden
             _phoneWidth    = phoneWidth;
             _phoneHeight   = phoneHeight;
             _injectFailLogged = false;
-
-            // Warm up the scrcpy control handler so it's ready before the first real action.
-            SendTouch(TOUCH_DOWN, phoneWidth / 2, phoneHeight / 2);
-            Thread.Sleep(50);
-            SendTouch(TOUCH_UP, phoneWidth / 2, phoneHeight / 2);
+            // No warm-up input: the server injects its first control message like any
+            // other. A centre tap here once "primed" it, and landed blind on whatever
+            // screen a rebuild came back to.
         }
 
         public static int PhoneWidth  => _phoneWidth;
