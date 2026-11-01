@@ -38,14 +38,13 @@ namespace Garden
         // The pump threads flag the death the INSTANT they see it (the catch
         // block IS the event); the render loop then tears down and rebuilds the
         // whole session: sweep the dead server, re-handshake, fresh ffmpeg.
-        // A frame-age check backstops silent stalls: input sent but no frame
-        // followed for 30s. Five manual rescues (07-08 .. 07-23) preceded this.
+        // A stall check backstops silent deaths: an input no frame has followed
+        // for 30s (see InputWatch). Five manual rescues (07-08 .. 07-23) preceded this.
         private readonly ScrcpyManager _scrcpy;
         private ScrcpyManager.GardenServer _server;
         private Process? _ffmpeg;
         private int _sessionGen;
         private volatile bool _streamDead;
-        private long _lastFrameTicks;
         private long _frameSeq;                 // bumps once per REAL decoded frame; render/scan gate on it
         private DateTime _lastRebuildTry = DateTime.MinValue;
 
@@ -197,7 +196,7 @@ namespace Garden
                         _latestVideoFrame = mat;
                         _latestVideoStamp = stamp;
                     }
-                    Interlocked.Exchange(ref _lastFrameTicks, DateTime.UtcNow.Ticks);
+                    InputWatch.Answered(stamp?.ArrivalTicks ?? t1);
                     Interlocked.Increment(ref _frameSeq);
                 }
             }
@@ -258,7 +257,7 @@ namespace Garden
                 return;
             }
             _streamDead = false;
-            Interlocked.Exchange(ref _lastFrameTicks, DateTime.UtcNow.Ticks);
+            InputWatch.Reset();
             _roiDetector.LogEvent("(engine) capture session REBUILT -- stream restored");
         }
 
@@ -358,14 +357,12 @@ namespace Garden
                     if (_streamDead) { RebuildSession(token); }
                     else
                     {
-                        // silent-stall backstop: we injected input but no frame followed --
-                        // a live screen always changes under a tap/swipe, so this means the
-                        // stream died without an EOF. Static idle screens can't false-trigger
-                        // (no input, no expectation).
-                        long lf = Interlocked.Read(ref _lastFrameTicks), li = Interlocked.Read(ref InputManager.LastInjectTicks);
-                        if (lf > 0 && li > lf
-                            && DateTime.UtcNow.Ticks - li > TimeSpan.FromSeconds(15).Ticks
-                            && DateTime.UtcNow.Ticks - lf > TimeSpan.FromSeconds(30).Ticks)
+                        // silent-stall backstop: the oldest input no frame has followed.
+                        // Static idle screens can't trigger it (no input, no expectation).
+                        // It can misfire on an input that changes nothing followed by 30s of
+                        // a still screen; that costs one rebuild, a frozen stream costs the
+                        // whole recovery run.
+                        if (InputWatch.WaitingTicks(Stopwatch.GetTimestamp()) > 30 * Stopwatch.Frequency)
                         {
                             _roiDetector.LogEvent("(engine) VIDEO STALLED (input sent, no frame followed) -- rebuilding session");
                             _streamDead = true;

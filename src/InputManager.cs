@@ -76,7 +76,7 @@ namespace Garden
             WriteUInt32BE(buf, 24, 0); // action button
             WriteUInt32BE(buf, 28, 0); // buttons
             if (!TryWrite(buf, 32)) { return; }
-            System.Threading.Interlocked.Exchange(ref LastInjectTicks, DateTime.UtcNow.Ticks);
+            InputWatch.Sent(System.Diagnostics.Stopwatch.GetTimestamp());
         }
 
         private static void WriteUInt64BE(byte[] b, int o, ulong v) { WriteUInt32BE(b, o, (uint)(v >> 32)); WriteUInt32BE(b, o + 4, (uint)v); }
@@ -94,10 +94,6 @@ namespace Garden
         // screen is the drawer-opening swipe. killApp ends with this.
         public static void Home() => SendKey(AKEYCODE_HOME);
 
-        // stamped on every injected touch/key: the frame-stall watchdog checks
-        // "input sent but no frame followed"
-        public static long LastInjectTicks;
-
         public static void SendKey(int keycode)
         {
             if (_controlStream == null) { return; }
@@ -110,7 +106,7 @@ namespace Garden
             if (!TryWrite(buf, 14)) { return; }
             buf[1] = 1; // key up
             if (!TryWrite(buf, 14)) { return; }
-            System.Threading.Interlocked.Exchange(ref LastInjectTicks, DateTime.UtcNow.Ticks);
+            InputWatch.Sent(System.Diagnostics.Stopwatch.GetTimestamp());
         }
 
         // Simulates a left mouse button click at the current cursor position
